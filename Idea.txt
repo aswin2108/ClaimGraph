@@ -119,10 +119,16 @@ Score bands
 30–59: Review — additional examination may be warranted.
 60–100: High Priority — prioritize human investigation.
 A high score does not establish fraud. The interface must use investigation-oriented language throughout.
-Scale amendments (2026-10-15, after the 20,000-claim benchmark; every T01-T30 expectation is unchanged):
+Scale amendments (2026-10-15, after the 20,000-claim benchmark; these three leave every T01-T30 expectation unchanged):
 - Shared infrastructure: a repair shop, public IP, vendor settlement account, public device or private IP used by more than 20 claims counts once as weak evidence for its category, with its exact user count, but its users are not treated as connected claims (no breadth, timing or confirmed-case points). Strong identifiers (payout, device, contact, address) are never treated this way.
 - The same claimant filing several claims with their own account or device is not shared-entity evidence (this already applied to contact and address).
 - Breadth, timing and prior outcomes are computed over every connected claim, not only the claims listed in the report.
+Score v2 (2026-10-16): separating rings from households. On the 20,000-claim book, legitimate groups live at one address (never 4 or more), rarely file more than 2 claims in 90 days and are on new policies 18% of the time; the planted rings span 4-14 addresses, file every claim within weeks and are always on new policies.
+- Household explanation: when every shared claimant payout account, device or phone is shared only with claimants at the target claimant's own address, the multi-signal bonus (+10) is withheld and the report says a household or joint account explains it. Category points still count.
+- Claim burst (+10): at least 3 claims linked by strong evidence on every step (payout, device, contact, address) were filed within 90 days of the target.
+- New-policy cluster (+10): the target was filed within 60 days of its policy starting, and at least one claim linked by strong evidence was too.
+- Changed expectations: T01 80->90, T08 80->90 (burst); T05 55->45, T07 77->67, T14 50->40 (household-explained). Every band and both acceptance targets are unchanged.
+- Ring review order (not a score): rings are ordered by four indicators (claimants at 3+ addresses, 4+ claims within 90 days, half or more on new policies, a confirmed case), then by addresses, burst and size.
 Feature 6: Counterfactual investigation — our signature feature
 The investigator can exclude one evidence category from the analysis and recompute the score.
 The first supported interaction will be:
@@ -237,7 +243,7 @@ Synthetic scenario
 Expected result
 T01
 Payout destination and non-public device shared across four connected claims; at least one related claim is within seven days.
-80 — High Priority. Both strong signals and the connecting paths are returned.
+90 — High Priority (score v2; was 80: +10 claim burst, three strongly linked claims within 90 days). Both strong signals and the connecting paths are returned.
 T02
 Payout destination and device shared with one other claim; the claims are not within the seven-day window.
 60 — High Priority. Strong independent signals suffice without the time bonus.
@@ -249,16 +255,16 @@ Payout destination and claimant contact are shared with another claim filed with
 62 — High Priority. Show the payout and contact evidence.
 T05
 Device and address are shared with one related claim within seven days.
-55 — Review. The system surfaces the evidence without claiming certainty.
+45 — Review (score v2; was 55: the device is shared only with someone at the same address, so the multi-signal bonus is withheld as household-explained). The system surfaces the evidence without claiming certainty.
 T06
 A payout/device connection leads to a previously human-confirmed fraud case. One other distinct claim is connected.
 75 — High Priority. Retrieve the prior outcome and show the relevant path.
 T07
 Target connects to two other claims through payout, contact, and address signals, with temporal proximity.
-77 — High Priority. Show independent corroborating categories.
+67 — High Priority (score v2; was 77: both related claimants share the target's address, so the bonus is withheld as household-explained). Show the corroborating categories.
 T08
 Several claims form a multi-hop cluster through payout and device connections, with three related claims and temporal proximity.
-80 — High Priority. Display the cluster and its evidence paths.
+90 — High Priority (score v2; was 80: +10 claim burst). Display the cluster and its evidence paths.
 T09
 Device and contact are shared with one other claim filed within seven days.
 57 — Review. Return both signals and explain their contributions.
@@ -282,7 +288,7 @@ Four other claims share an address, with no other shared identifiers.
 25 — Low. Return the address connection without treating it as proof of wrongdoing.
 T14
 Two legitimate household members use a joint payout account and share an address. There is no temporal bonus.
-50 — Review. Surface the ambiguity; never classify it as confirmed fraud.
+40 — Review (score v2; was 50: joint account inside one household, bonus withheld). Surface the ambiguity; never classify it as confirmed fraud.
 T15
 Multiple claims share a company-network IP and a busy repair shop within seven days.
 36 — Review. No High Priority classification based on these weak/shared signals alone.

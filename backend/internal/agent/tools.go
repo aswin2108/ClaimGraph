@@ -568,7 +568,7 @@ func (tb *Toolbox) claimRing(raw []byte) (any, error) {
 		"shared_entities": entities, "hub_entity": ring.HubEntity,
 		"first_filed": ring.FirstFiled, "last_filed": ring.LastFiled, "filing_span_days": ring.SpanDays,
 		"confirmed_fraud_cases_in_ring": ring.ConfirmedFraudCases, "other_recorded_cases_in_ring": ring.OtherRecordedCases,
-		"backbone_links": backbone, "message": ring.Message, "note": ring.Note,
+		"backbone_links": backbone, "ring_indicators": ring.Traits, "message": ring.Message, "note": ring.Note,
 	}, nil
 }
 

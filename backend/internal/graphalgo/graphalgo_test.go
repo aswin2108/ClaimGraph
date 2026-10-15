@@ -493,3 +493,52 @@ func TestAlgorithmCacheIsCorrect(t *testing.T) {
 		t.Fatalf("a recreated graph must not reuse old results: %s", ids(re.Members))
 	}
 }
+
+// A small ring (different addresses, filed in a burst on new policies) is reviewed before a
+// larger household (one address, claims spread over two years, old policies).
+func TestRingIndicatorsOrderRingsBeforeHouseholds(t *testing.T) {
+	g := scratch(t, "claimgraph_test_algo_indicators")
+	newPol := func(start string) func(f *ingest.FNOL) {
+		return func(f *ingest.FNOL) { f.PolicyStart, f.PolicyEnd = start, "2027-12-31" }
+	}
+	// Household: 7 claims by 3 people at one address over ~2 years, joint account.
+	dates := []string{"2024-12-01", "2025-03-01", "2025-07-01", "2025-11-01", "2026-02-01", "2026-06-01", "2026-09-01"}
+	for i, d := range dates {
+		i, d := i, d
+		load(t, g, fx(fmt.Sprintf("H%d", i), d, func(f *ingest.FNOL) {
+			f.ClaimantID = fmt.Sprintf("DRV-HOME-%d", i%3)
+			f.PayoutAccountID, f.AddressID = "PAY-JOINT", "ADDR-HOME"
+			f.PolicyStart = "2024-01-01"
+		}))
+	}
+	// Ring: 5 claims by 5 people at 5 addresses within 30 days, on new policies, one mule account.
+	for i := 0; i < 5; i++ {
+		filed := fmt.Sprintf("2026-08-%02d", 1+i*6)
+		load(t, g, fx(fmt.Sprintf("Q%d", i), filed, func(f *ingest.FNOL) {
+			f.PayoutAccountID, f.AddressID = "PAY-MULE", fmt.Sprintf("ADDR-Q%d", i)
+			newPol("2026-07-15")(f)
+		}))
+	}
+	list, err := ListRings(g, 3, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Rings) != 2 || list.Rings[0].RingID != "RING-Q0" {
+		t.Fatalf("the ring must be reviewed first: %+v", list.Rings)
+	}
+	ring, hh := list.Rings[0], list.Rings[1]
+	want := []string{IndicatorAddresses, IndicatorBurst, IndicatorNewPolicy}
+	if strings.Join(ring.Indicators, ",") != strings.Join(want, ",") || ring.Addresses != 5 || ring.Burst90 != 5 {
+		t.Fatalf("ring traits: %+v", ring.RingTraits)
+	}
+	if len(hh.Indicators) != 0 || hh.Addresses != 1 || hh.Size != 7 {
+		t.Fatalf("household traits: %+v (size %d)", hh.RingTraits, hh.Size)
+	}
+	detail, err := RingOf(g, "Q3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(detail.Traits.Indicators, ",") != strings.Join(want, ",") {
+		t.Fatalf("ring detail must carry the same indicators: %+v", detail.Traits)
+	}
+}

@@ -106,6 +106,9 @@ func main() {
 	truncated := map[string]int{}
 	withInfra := map[string]int{}
 	trimmed := map[string]int{}
+	factorHits := map[string]map[string]int{} // sample -> factor -> claims where it fired
+	scoreSum := map[string]int{}
+	household := map[string]int{}
 	// The first ring lookup in a process runs algo.WCC and algo.MSF over the whole book;
 	// later lookups reuse those results until the evidence version changes.
 	t0 := time.Now()
@@ -144,6 +147,16 @@ func main() {
 				errs["Analyze (traversal + score + prior cases)"]++
 			} else {
 				bands[s.label][rep.Band]++
+				scoreSum[s.label] += rep.Score
+				if rep.HouseholdExplained {
+					household[s.label]++
+				}
+				if factorHits[s.label] == nil {
+					factorHits[s.label] = map[string]int{}
+				}
+				for _, f := range rep.Factors {
+					factorHits[s.label][f.Name]++
+				}
 			}
 			t0 = time.Now()
 			_, err = scoring.RunCounterfactual(g, c, 3, investigate.CatRepairShop)
@@ -268,6 +281,42 @@ func main() {
 		fmt.Fprintf(&r, "| %s | %d | %d | %d |\n", s.label, bb[scoring.BandLow], bb[scoring.BandReview], bb[scoring.BandHigh])
 	}
 	r.WriteString("\nThe score uses direct (1-transition) evidence only; ring membership beyond that is shown by the ring tools and never changes the score.\n")
+
+	// What actually drives the scores: share of claims where each factor fired.
+	r.WriteString("\n## What drives the score (share of claims where each factor fired)\n\n| factor | points |")
+	for _, s := range samples {
+		fmt.Fprintf(&r, " %s |", s.label)
+	}
+	r.WriteString("\n|---|---|")
+	for range samples {
+		r.WriteString("---|")
+	}
+	r.WriteString("\n")
+	factorOrder := []struct {
+		name string
+		pts  int
+	}{
+		{scoring.FSharedPayout, scoring.PtsPayout}, {scoring.FSharedDevice, scoring.PtsDevice}, {scoring.FSharedContact, scoring.PtsContact},
+		{scoring.FSharedAddress, scoring.PtsAddress}, {scoring.FSharedRepair, scoring.PtsRepairShop}, {scoring.FSharedPublicIP, scoring.PtsPublicIP},
+		{scoring.FClaimBreadth, scoring.PtsClaimsCap}, {scoring.FTemporal, scoring.PtsTemporal}, {scoring.FBurst, scoring.PtsBurst},
+		{scoring.FNewPolicy, scoring.PtsNewPolicy}, {scoring.FConfirmedFraud, scoring.PtsConfirmed}, {scoring.FReinforcement, scoring.PtsReinforce},
+	}
+	for _, f := range factorOrder {
+		fmt.Fprintf(&r, "| %s | %d |", f.name, f.pts)
+		for _, s := range samples {
+			fmt.Fprintf(&r, " %d%% |", 100*factorHits[s.label][f.name]/len(s.claims))
+		}
+		r.WriteString("\n")
+	}
+	r.WriteString("| household-explained (bonus withheld) | - |")
+	for _, s := range samples {
+		fmt.Fprintf(&r, " %d%% |", 100*household[s.label]/len(s.claims))
+	}
+	r.WriteString("\n| average score | - |")
+	for _, s := range samples {
+		fmt.Fprintf(&r, " %d |", scoreSum[s.label]/len(s.claims))
+	}
+	r.WriteString("\n")
 
 	fmt.Print(r.String())
 	if *out != "" {

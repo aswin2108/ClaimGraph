@@ -98,14 +98,32 @@ type ConnectedClaim struct {
 	ClaimID    string
 	Hops       int
 	FilingDate string
+	Strong     bool // reached by a path whose every step is strong evidence
 }
 
 func connectedOf(rcs []RelatedClaim) []ConnectedClaim {
 	out := make([]ConnectedClaim, len(rcs))
 	for i, rc := range rcs {
-		out[i] = ConnectedClaim{ClaimID: rc.ClaimID, Hops: rc.Hops, FilingDate: rc.FilingDate}
+		out[i] = ConnectedClaim{ClaimID: rc.ClaimID, Hops: rc.Hops, FilingDate: rc.FilingDate, Strong: StrongPath(rc)}
 	}
 	return out
+}
+
+// StrongPath reports whether any of the claim's paths uses strong evidence on every step.
+func StrongPath(rc RelatedClaim) bool {
+	for _, p := range rc.Paths {
+		strong := len(p.Steps) > 0
+		for _, s := range p.Steps {
+			if !StrongCategory(SignalCategory(s)) {
+				strong = false
+				break
+			}
+		}
+		if strong {
+			return true
+		}
+	}
+	return false
 }
 
 // InfrastructureLink is a weak/context identifier the target shares with many claims.

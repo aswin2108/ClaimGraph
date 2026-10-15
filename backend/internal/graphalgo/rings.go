@@ -114,7 +114,13 @@ const (
 	cypherClaimFacts = `
 		MATCH (c:Claim) WHERE c.claim_id IN $claims
 		OPTIONAL MATCH (ic:InvestigationCase)-[:INVESTIGATES]->(c)
-		RETURN c.claim_id AS claim_id, c.filing_date AS filed, c.amount AS amount, collect(ic.disposition) AS dispositions`
+		WITH c, collect(ic.disposition) AS dispositions
+		OPTIONAL MATCH (c)-[:FILED_BY]->(k:Claimant)
+		OPTIONAL MATCH (k)-[:RESIDES_AT]->(a:Address)
+		OPTIONAL MATCH (c)-[:COVERED_BY]->(p:Policy)
+		RETURN c.claim_id AS claim_id, c.filing_date AS filed, c.amount AS amount, dispositions,
+		       k.claimant_id AS claimant, collect(DISTINCT a.address_id) AS addresses,
+		       c.incident_date AS incident, p.start_date AS policy_start`
 
 	// cypherSharedEntities: strong entities used by at least two member claims.
 	cypherSharedEntities = `
@@ -154,11 +160,17 @@ const (
 		OPTIONAL MATCH (ic:InvestigationCase)-[:INVESTIGATES]->(node)
 		WITH componentId, node, count(ic) AS cases,
 		     sum(CASE WHEN ic.disposition = 'confirmed_fraud' THEN 1 ELSE 0 END) AS confirmed
+		OPTIONAL MATCH (node)-[:FILED_BY]->(k:Claimant)
+		OPTIONAL MATCH (k)-[:RESIDES_AT]->(a:Address)
+		OPTIONAL MATCH (node)-[:COVERED_BY]->(p:Policy)
+		WITH componentId, node, cases, confirmed, k.claimant_id AS kid, collect(DISTINCT a.address_id) AS addrs, p.start_date AS pstart
 		WITH componentId, count(node) AS size, min(node.claim_id) AS first_id, collect(node.claim_id)[..10] AS sample,
 		     min(node.filing_date) AS first_filed, max(node.filing_date) AS last_filed, sum(node.amount) AS total,
-		     sum(confirmed) AS confirmed, sum(CASE WHEN cases = 0 THEN 1 ELSE 0 END) AS open
+		     sum(confirmed) AS confirmed, sum(CASE WHEN cases = 0 THEN 1 ELSE 0 END) AS open,
+		     collect(node.filing_date) AS filed, collect(DISTINCT kid) AS claimants, collect(addrs) AS addr_lists,
+		     collect([node.incident_date, pstart]) AS tenure
 		WHERE size >= $min
-		RETURN first_id, size, sample, first_filed, last_filed, total, confirmed, open`
+		RETURN first_id, size, sample, first_filed, last_filed, total, confirmed, open, filed, claimants, addr_lists, tenure`
 
 	cypherClaimExists = `MATCH (c:Claim {claim_id:$id}) RETURN count(c) AS n`
 )
@@ -215,6 +227,7 @@ type Ring struct {
 	Message             string       `json:"message,omitempty"`
 	Note                string       `json:"note"`
 	Cached              bool         `json:"algorithm_results_cached"` // WCC/MSF reused for this evidence version
+	Traits              RingTraits   `json:"traits"`                   // indicators that separate rings from households
 	DurationMs          int64        `json:"duration_ms"`
 }
 
@@ -309,10 +322,23 @@ func (ring *Ring) loadFacts(g *falkordb.Graph, members []string) error {
 		return err
 	}
 	var all []RingClaim
+	var filed []string
+	claimants, addresses := map[string]bool{}, map[string]bool{}
+	newPolicies := 0
 	for r.Next() {
 		rec := r.Record()
 		rc := RingClaim{ClaimID: str(get(rec, "claim_id")), FilingDate: str(get(rec, "filed")),
 			Amount: num(get(rec, "amount")), Dispositions: strings_(get(rec, "dispositions"))}
+		filed = append(filed, rc.FilingDate)
+		if k := str(get(rec, "claimant")); k != "" {
+			claimants[k] = true
+		}
+		for _, a := range strings_(get(rec, "addresses")) {
+			addresses[a] = true
+		}
+		if newPolicy(str(get(rec, "incident")), str(get(rec, "policy_start"))) {
+			newPolicies++
+		}
 		sort.Strings(rc.Dispositions)
 		for _, d := range rc.Dispositions {
 			if d == "confirmed_fraud" {
@@ -331,6 +357,7 @@ func (ring *Ring) loadFacts(g *falkordb.Graph, members []string) error {
 		all = append(all, rc)
 	}
 	ring.SpanDays = daysBetween(ring.FirstFiled, ring.LastFiled)
+	ring.Traits = traitsOf(len(all), filed, claimants, addresses, newPolicies, ring.ConfirmedFraudCases)
 	sort.Slice(all, func(i, j int) bool { return all[i].ClaimID < all[j].ClaimID })
 	if len(all) > MaxMembersShown {
 		all = keepTargetClaims(all, ring.TargetClaim, MaxMembersShown)
@@ -411,6 +438,7 @@ type RingSummary struct {
 	ConfirmedFraudCases int      `json:"confirmed_fraud_cases"`
 	OpenClaims          int      `json:"claims_without_recorded_outcome"`
 	Oversized           bool     `json:"oversized"`
+	RingTraits
 }
 
 // RingList is the book-wide ring overview.
@@ -461,7 +489,7 @@ func ListRings(g *falkordb.Graph, minSize, limit int) (*RingList, error) {
 		return nil, err
 	}
 	out := &RingList{Algorithm: "algo.WCC", MinSize: minSize, Rings: []RingSummary{}, Note: ringNote,
-		Ordering: "rings with a human-confirmed case first, then larger rings, then shorter filing span, then ring id (queue ordering, not a score)"}
+		Ordering: indicatorsOrderNote}
 	rows := 0
 	for r.Next() {
 		rows++
@@ -471,23 +499,29 @@ func ListRings(g *falkordb.Graph, minSize, limit int) (*RingList, error) {
 			TotalAmount: num(get(rec, "total")), ConfirmedFraudCases: int(num(get(rec, "confirmed"))), OpenClaims: int(num(get(rec, "open")))}
 		sort.Strings(s.Claims)
 		s.Oversized = s.Size > MaxRingClaims
+		claimants, addresses := map[string]bool{}, map[string]bool{}
+		for _, k := range strings_(get(rec, "claimants")) {
+			claimants[k] = true
+		}
+		lists, _ := get(rec, "addr_lists").([]interface{})
+		for _, l := range lists {
+			for _, a := range strings_(l) {
+				addresses[a] = true
+			}
+		}
+		newPolicies := 0
+		tenure, _ := get(rec, "tenure").([]interface{})
+		for _, t := range tenure {
+			if pair := strings_(t); len(pair) == 2 && newPolicy(pair[0], pair[1]) {
+				newPolicies++
+			}
+		}
+		s.RingTraits = traitsOf(s.Size, strings_(get(rec, "filed")), claimants, addresses, newPolicies, s.ConfirmedFraudCases)
 		s.SpanDays = daysBetween(s.FirstFiled, s.LastFiled)
 		out.Rings = append(out.Rings, s)
 	}
 	out.Truncated = rows >= serverResultCap
-	sort.Slice(out.Rings, func(i, j int) bool {
-		a, b := out.Rings[i], out.Rings[j]
-		if (a.ConfirmedFraudCases > 0) != (b.ConfirmedFraudCases > 0) {
-			return a.ConfirmedFraudCases > 0
-		}
-		if a.Size != b.Size {
-			return a.Size > b.Size
-		}
-		if a.SpanDays != b.SpanDays {
-			return a.SpanDays < b.SpanDays
-		}
-		return a.RingID < b.RingID
-	})
+	sort.Slice(out.Rings, func(i, j int) bool { return lessRing(out.Rings[i], out.Rings[j]) })
 	out.TotalRings = len(out.Rings)
 	if len(out.Rings) > limit {
 		out.Rings = out.Rings[:limit]

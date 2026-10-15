@@ -13,26 +13,31 @@ import (
 
 // Points per evidence signal (each category counts at most once per target claim).
 const (
-	PtsPayout     = 25
-	PtsDevice     = 20
-	PtsContact    = 12
-	PtsAddress    = 10
-	PtsRepairShop = 8
-	PtsPublicIP   = 3
-	PtsPerClaim   = 5  // each additional distinct connected claim...
-	PtsClaimsCap  = 15 // ...capped here
-	PtsTemporal   = 10 // a related claim filed within TemporalDays
-	PtsConfirmed  = 15 // older, human-confirmed fraud case among related claims
-	PtsReinforce  = 10 // >= 2 independent strong categories
-	TemporalDays  = 7
-	MaxScore      = 100
-	BandReviewMin = 30
-	BandHighMin   = 60
-	DispConfirmed = "confirmed_fraud"
-	BandLow       = "Low"
-	BandReview    = "Review"
-	BandHigh      = "High Priority"
-	Disclaimer    = "This is an investigation-priority score for human review. It is not a fraud determination."
+	PtsPayout      = 25
+	PtsDevice      = 20
+	PtsContact     = 12
+	PtsAddress     = 10
+	PtsRepairShop  = 8
+	PtsPublicIP    = 3
+	PtsPerClaim    = 5  // each additional distinct connected claim...
+	PtsClaimsCap   = 15 // ...capped here
+	PtsTemporal    = 10 // a related claim filed within TemporalDays
+	PtsConfirmed   = 15 // older, human-confirmed fraud case among related claims
+	PtsReinforce   = 10 // >= 2 independent strong categories, not all explained by one household
+	PtsBurst       = 10 // >= BurstMinClaims other connected claims filed within BurstDays
+	PtsNewPolicy   = 10 // this claim and a connected claim are both on new policies
+	TemporalDays   = 7
+	BurstDays      = 90
+	BurstMinClaims = 3
+	NewPolicyDays  = 60 // a policy is "new" when the incident is at most this many days after it started
+	MaxScore       = 100
+	BandReviewMin  = 30
+	BandHighMin    = 60
+	DispConfirmed  = "confirmed_fraud"
+	BandLow        = "Low"
+	BandReview     = "Review"
+	BandHigh       = "High Priority"
+	Disclaimer     = "This is an investigation-priority score for human review. It is not a fraud determination."
 )
 
 // Factor names (stable identifiers used by the UI, agent and counterfactuals).
@@ -47,6 +52,8 @@ const (
 	FTemporal       = "temporal_proximity"
 	FConfirmedFraud = "confirmed_fraud_history"
 	FReinforcement  = "multi_signal_reinforcement"
+	FBurst          = "claim_burst"
+	FNewPolicy      = "new_policy_cluster"
 )
 
 // signalDefs maps an evidence category to its factor name and points, in report order.
@@ -106,6 +113,10 @@ type Report struct {
 	ExcludedCategory string              `json:"excluded_category,omitempty"`
 	Investigation    *investigate.Result `json:"investigation"`
 	Disclaimer       string              `json:"disclaimer"`
+	// HouseholdExplained: every strong identifier is shared only with people at the
+	// claimant's own address (a joint account, a family phone or device), so the
+	// multi-signal bonus is withheld. The category points still count.
+	HouseholdExplained bool `json:"household_explained"`
 }
 
 // Band classifies a score.
@@ -129,6 +140,13 @@ func Band(score int) (band, meaning string) {
 //   - The confirmed-fraud bonus needs a case with disposition confirmed_fraud on a related
 //     claim filed before the target ("older"). Other dispositions never score.
 func Compute(res *investigate.Result, cases []PriorCase) *Report {
+	return ComputeWithPolicies(res, cases, nil)
+}
+
+// ComputeWithPolicies is Compute with policy ages: policyDays maps a claim id (the target
+// and connected claims) to the number of days between its policy start and its incident.
+// Claims without an entry never trigger the new-policy signal.
+func ComputeWithPolicies(res *investigate.Result, cases []PriorCase, policyDays map[string]int) *Report {
 	r := &Report{
 		TargetClaim: res.TargetClaim, ExcludedCategory: res.ExcludedCategory,
 		Investigation: res, Factors: []Factor{}, PriorCases: cases, Uncertainty: []string{},
@@ -140,8 +158,20 @@ func Compute(res *investigate.Result, cases []PriorCase) *Report {
 		r.PriorCases = []PriorCase{}
 	}
 
-	// 1. Signal categories from direct connections.
+	// 1. Signal categories from direct connections. A related claim is co-resident when its
+	// claimant shares the target claimant's address (one of its direct paths is an address).
 	seen := map[string]*obs{}
+	coResident := map[string]bool{}
+	for _, rc := range res.RelatedClaims {
+		if rc.Hops != 1 {
+			continue
+		}
+		for _, p := range rc.Paths {
+			if investigate.SignalCategory(p.Steps[0]) == investigate.CatAddress {
+				coResident[rc.ClaimID] = true
+			}
+		}
+	}
 	for _, rc := range res.RelatedClaims {
 		if rc.Hops != 1 {
 			continue
@@ -242,13 +272,72 @@ func Compute(res *investigate.Result, cases []PriorCase) *Report {
 		total += f.Points
 	}
 
-	// 5. Multi-signal reinforcement.
-	if strong >= 2 {
+	// 5. Multi-signal reinforcement, unless one household explains every strong link: a
+	// payout account, device or phone shared only with people at the claimant's own address
+	// is what a joint account or a family looks like. A ring shares them across addresses.
+	unexplained := false
+	for _, cat := range []string{investigate.CatPayout, investigate.CatDevice, investigate.CatContact} {
+		if o := seen[cat]; o != nil {
+			for c := range o.claims {
+				if !coResident[c] {
+					unexplained = true
+				}
+			}
+		}
+	}
+	r.HouseholdExplained = strong >= 1 && !unexplained
+	if strong >= 2 && !r.HouseholdExplained {
 		r.Factors = append(r.Factors, Factor{
 			Name: FReinforcement, Points: PtsReinforce,
 			Reason: fmt.Sprintf("%d independent strong categories (payout, device, contact, address)", strong),
 		})
 		total += PtsReinforce
+	}
+
+	// 6. Claim burst: several STRONGLY connected claims (every step payout, device, contact
+	// or address) filed around the same time. Weak links such as a shared shop never count.
+	if target, ok := parseDate(res.TargetFilingDate); ok {
+		var burst []string
+		for _, rc := range connected {
+			if !rc.Strong {
+				continue
+			}
+			if d, ok := parseDate(rc.FilingDate); ok && absDays(target, d) <= BurstDays {
+				burst = append(burst, rc.ClaimID)
+			}
+		}
+		if len(burst) >= BurstMinClaims {
+			sort.Strings(burst)
+			if len(burst) > maxFactorClaims {
+				burst = burst[:maxFactorClaims]
+			}
+			r.Factors = append(r.Factors, Factor{Name: FBurst, Points: PtsBurst, Claims: burst,
+				Reason: fmt.Sprintf("%d or more claims linked by strong evidence were filed within %d days of this claim", BurstMinClaims, BurstDays)})
+			total += PtsBurst
+		}
+	}
+
+	// 7. New-policy cluster: this claim and at least one connected claim were filed soon after
+	// their policies started (claims shortly after inception are a common review trigger).
+	if d, ok := policyDays[res.TargetClaim]; ok && d >= 0 && d <= NewPolicyDays {
+		var newer []string
+		for _, rc := range connected {
+			if !rc.Strong {
+				continue
+			}
+			if pd, ok := policyDays[rc.ClaimID]; ok && pd >= 0 && pd <= NewPolicyDays {
+				newer = append(newer, rc.ClaimID)
+			}
+		}
+		if len(newer) > 0 {
+			sort.Strings(newer)
+			if len(newer) > maxFactorClaims {
+				newer = newer[:maxFactorClaims]
+			}
+			r.Factors = append(r.Factors, Factor{Name: FNewPolicy, Points: PtsNewPolicy, Claims: newer,
+				Reason: fmt.Sprintf("this claim and claims linked to it by strong evidence were filed within %d days of their policies starting", NewPolicyDays)})
+			total += PtsNewPolicy
+		}
 	}
 
 	if total > MaxScore {
@@ -257,6 +346,10 @@ func Compute(res *investigate.Result, cases []PriorCase) *Report {
 	r.Score = total
 	r.Band, r.BandMeaning = Band(total)
 	r.Uncertainty = uncertaintyNotes(seen, cases, len(connected)+len(res.InfrastructureLinks))
+	if r.HouseholdExplained {
+		r.Uncertainty = append(r.Uncertainty,
+			"Every shared payout account, device or phone is shared only with people at the claimant's own address, which a household or joint account explains; the multi-signal bonus was not applied.")
+	}
 	for _, l := range res.InfrastructureLinks {
 		r.Uncertainty = append(r.Uncertainty, fmt.Sprintf(
 			"%s %s is shared infrastructure used by %d other claims; it counts once as weak evidence and those claims are not treated as connections.",
@@ -276,7 +369,8 @@ func connectedClaims(res *investigate.Result) []investigate.ConnectedClaim {
 	}
 	out := make([]investigate.ConnectedClaim, len(res.RelatedClaims))
 	for i, rc := range res.RelatedClaims {
-		out[i] = investigate.ConnectedClaim{ClaimID: rc.ClaimID, Hops: rc.Hops, FilingDate: rc.FilingDate}
+		out[i] = investigate.ConnectedClaim{ClaimID: rc.ClaimID, Hops: rc.Hops, FilingDate: rc.FilingDate,
+			Strong: investigate.StrongPath(rc)}
 	}
 	return out
 }

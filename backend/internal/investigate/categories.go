@@ -28,6 +28,16 @@ const (
 // The value is above every T01-T30 fixture (at most 6 claims share an identifier there).
 const InfrastructureMinClaims = 20
 
+// StrongCategory reports whether a category is strong evidence (payout, private device,
+// contact, address).
+func StrongCategory(category string) bool {
+	switch category {
+	case CatPayout, CatDevice, CatContact, CatAddress:
+		return true
+	}
+	return false
+}
+
 // WeakOrContext reports whether a category can be infrastructure.
 func WeakOrContext(category string) bool {
 	switch category {

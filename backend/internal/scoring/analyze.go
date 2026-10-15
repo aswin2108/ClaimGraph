@@ -31,7 +31,45 @@ func analyze(g *falkordb.Graph, claimID string, maxHops int, exclude string) (*R
 	if err != nil {
 		return nil, err
 	}
-	return Compute(res, cases), nil
+	policies, err := policyDays(g, res)
+	if err != nil {
+		return nil, err
+	}
+	return ComputeWithPolicies(res, cases, policies), nil
+}
+
+// cypherPolicyAges reads each claim's policy start and incident date.
+const cypherPolicyAges = `
+	MATCH (c:Claim)-[:COVERED_BY]->(p:Policy)
+	WHERE c.claim_id IN $ids
+	RETURN c.claim_id AS id, c.incident_date AS incident, p.start_date AS start`
+
+// policyDays returns, for the target and every connected claim, the days from policy start
+// to incident (only when the target itself has a connection; otherwise nothing is needed).
+func policyDays(g *falkordb.Graph, res *investigate.Result) (map[string]int, error) {
+	connected := connectedClaims(res)
+	if len(connected) == 0 {
+		return nil, nil
+	}
+	ids := []any{res.TargetClaim}
+	for _, c := range connected {
+		ids = append(ids, c.ClaimID)
+	}
+	r, err := g.ROQuery(cypherPolicyAges, map[string]any{"ids": ids}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("policy ages query: %w", err)
+	}
+	out := map[string]int{}
+	for r.Next() {
+		rec := r.Record()
+		get := func(k string) string { v, _ := rec.Get(k); s, _ := v.(string); return s }
+		inc, ok1 := parseDate(get("incident"))
+		start, ok2 := parseDate(get("start"))
+		if ok1 && ok2 {
+			out[get("id")] = int(inc.Sub(start).Hours() / 24)
+		}
+	}
+	return out, nil
 }
 
 // priorCases returns outcomes recorded on claims connected to the target.

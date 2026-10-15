@@ -20,7 +20,9 @@ func Connect() (*falkordb.FalkorDB, error) {
 	if addr == "" {
 		addr = "localhost:6379"
 	}
-	db, err := falkordb.FalkorDBNew(&falkordb.ConnectionOption{Addr: addr})
+	// ReadTimeout is above every server-side query timeout we set (at most 6 s), so FalkorDB
+	// always aborts a slow query first and reports it, instead of the client giving up blind.
+	db, err := falkordb.FalkorDBNew(&falkordb.ConnectionOption{Addr: addr, ReadTimeout: 10 * time.Second})
 	if err != nil {
 		return nil, fmt.Errorf("connect %s: %w", addr, err)
 	}

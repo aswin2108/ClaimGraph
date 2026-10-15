@@ -38,9 +38,14 @@ import (
 )
 
 const (
-	queryTimeoutMs = 2500 // per-query FalkorDB timeout, kept below the Go client's 3s read timeout so a runaway traversal fails cleanly
-	directRowLimit = 1000 // rows per relationship type for single-transition paths
-	deepRowLimit   = 750  // rows per path shape for 2..3-transition paths (12 shapes x 751 < serverResultCap)
+	queryTimeoutMs = 2500 // per-query FalkorDB timeout for ordinary traversal queries
+	// aggregatedTimeoutMs is the budget of the complete (aggregated) 2-3 transition query. Dense
+	// neighbourhoods enumerate many paths before aggregating; past this budget the traversal
+	// falls back to row-limited paths and reports truncation. Both stay below the client's
+	// 10 s read timeout (internal/graph).
+	aggregatedTimeoutMs = 6000
+	directRowLimit      = 1000 // rows per relationship type for single-transition paths
+	deepRowLimit        = 750  // rows per path shape for 2..3-transition paths (12 shapes x 751 < serverResultCap)
 	// serverResultCap is FalkorDB's default RESULTSET_SIZE: a reply is silently cut at this
 	// many rows. The row limits keep every query below it; a reply that reaches it anyway
 	// (a server configured lower) is treated as truncated.
@@ -240,11 +245,15 @@ func deepQuery(rs relSets, minLen, maxLen int, pair, aggregate bool) string {
 // limit is the per-branch row limit; cut is true when any branch returned more rows
 // than that (results may be incomplete).
 func run(g *falkordb.Graph, query string, params map[string]any, limit int) (chains [][]Step, info map[string]claimInfo, cut bool, err error) {
+	return runWithin(g, query, params, limit, queryTimeoutMs)
+}
+
+func runWithin(g *falkordb.Graph, query string, params map[string]any, limit, timeoutMs int) (chains [][]Step, info map[string]claimInfo, cut bool, err error) {
 	params["limit"] = limit + 1 // one extra row per branch reveals truncation
 	params["fanout"] = maxExpandFanout
 	params["infra"] = InfrastructureMinClaims
 	params["per_claim"] = samplesPerClaim
-	r, err := g.ROQuery(query, params, falkordb.NewQueryOptions().SetTimeout(queryTimeoutMs))
+	r, err := g.ROQuery(query, params, falkordb.NewQueryOptions().SetTimeout(timeoutMs))
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "timed out") {
 			return nil, nil, false, ErrTraversalTimeout
@@ -435,7 +444,7 @@ func discover(g *falkordb.Graph, claimID string, maxHops int, exclude string) (c
 		// Aggregated first: complete claim set, one row per reached claim. If FalkorDB
 		// cannot finish that within the time limit (an unusually dense neighbourhood), fall
 		// back to row-limited path enumeration and report the result as truncated.
-		c, i, k, err = run(g, deepQuery(rs, 2, maxHops, false, true), map[string]any{"id": claimID}, deepRowLimit)
+		c, i, k, err = runWithin(g, deepQuery(rs, 2, maxHops, false, true), map[string]any{"id": claimID}, deepRowLimit, aggregatedTimeoutMs)
 		if errors.Is(err, ErrTraversalTimeout) {
 			c, i, _, err = run(g, deepQuery(rs, 2, maxHops, false, false), map[string]any{"id": claimID}, deepRowLimit)
 			k = true
