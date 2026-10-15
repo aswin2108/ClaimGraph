@@ -1,0 +1,448 @@
+ClaimGraph — Project North Star
+Version 1.0 | Hackathon scope and execution specification
+1. The idea in one paragraph
+ClaimGraph is an evidence-driven AI investigation copilot for insurance fraud investigators (SIU teams). When a First Notice of Loss (FNOL) arrives, ordinary policy checks may show that everything looks legitimate. ClaimGraph writes the claim and its associated entities into FalkorDB, traverses the graph to discover suspicious connections across multiple claims, and deploys a bounded AI agent to investigate those relationships. It returns an explainable investigation-priority score, concrete evidence paths, relevant historical investigation outcomes, and a recommended next verification step. Its signature feature is counterfactual investigation: the investigator can remove a suspicious relationship from the analysis and see whether the remaining evidence still justifies further investigation. An investigator remains responsible for consequential decisions.
+Our tagline
+Every claim looks innocent on its own. The fraud is in the connections.
+Our one-sentence product promise
+Turn disconnected insurance claims into an evidence-backed investigation that explains what is suspicious, why it matters, and what to check next.
+
+2. The problem we are solving
+Traditional claim processing checks claims individually:
+Is the policy active?
+Is the incident covered?
+Is the payout within the permitted limits?
+Are the required documents present?
+These checks are necessary, but they may not reveal coordinated activity across multiple claimants.
+For example, several apparently unrelated claims may share a payout destination, a device, or a cluster of relationships involving the same repair shop. Individual records can look legitimate while their connections warrant investigation.
+ClaimGraph addresses this problem by treating relationships between claims as first-class evidence.
+The target user
+An insurance Special Investigations Unit (SIU) investigator who needs to prioritize suspicious claims and understand the evidence before taking further action.
+The product is not
+An automatic fraud conviction system.
+An insurance policy-administration platform.
+A replacement for a human investigator.
+A generic chatbot that happens to use a graph database.
+It is an investigation tool whose answers are grounded in a real graph.
+
+3. The core user journey
+The following flow is the backbone of our entire product. Every major feature must support it.
+Receive an FNOL. A new synthetic insurance claim enters the system. Its ordinary policy checks can pass.
+Connect the evidence. The Go backend inserts or updates the claim and its associated entities in FalkorDB.
+Investigate relationships. The agent retrieves related claims and traverses shared entities across a bounded number of claim-to-claim transitions.
+Explain the findings. The system calculates a deterministic investigation-priority score and presents the actual paths and evidence supporting it.
+Challenge the finding. The investigator excludes a particular signal, such as a shared repair shop, and sees the score and evidence change.
+Recommend a next step. The agent suggests a specific verification action grounded in the strongest remaining evidence.
+Record the outcome. The investigator records a simulated disposition. Future investigations can retrieve this previous case and its outcome.
+The complete journey must work in the running application. We are not building independent features that cannot be demonstrated together.
+
+4. Exact features we will implement
+Everything below is in scope for the MVP.
+P0 — Essential features
+Feature 1: Synthetic FNOL ingestion
+A user can submit a claim through the interface or API.
+The synthetic FNOL contains the relevant fields available for our demonstration, including a claim ID, claimant, policy, incident date, payout destination, repair shop, and any available contact, address, device, or IP references.
+The application will:
+Validate required fields.
+Create the claim and relevant graph relationships.
+Use stable synthetic identifiers for entities.
+Avoid duplicating data when the same FNOL is submitted again.
+Display the claim and its ordinary policy-check status.
+The ordinary policy checks will be a small deterministic demonstration. We will not build a complete insurance rules engine.
+Feature 2: FalkorDB-powered relationship discovery
+FalkorDB must perform the actual graph investigation.
+The Go backend will execute predefined, parameterized Cypher queries that:
+Find claims connected through shared entities.
+Traverse up to three claim-to-claim transitions.
+Retrieve the paths connecting the target claim to related claims.
+Identify the entity and relationship responsible for every reported connection.
+Retrieve relevant previous investigation cases and dispositions.
+Apply traversal limits to avoid runaway queries and irrelevant distant connections.
+The investigation must work on real data stored in FalkorDB. We will not hardcode the answer for the demo claim.
+Feature 3: Evidence-backed investigation report
+For every investigated claim, the system will show:
+Investigation-priority score from 0–100.
+Low, Review, or High Priority classification.
+Number of connected claims.
+The important shared entities and relationship types.
+The exact connecting paths.
+Evidence identifiers and associated timestamps when available.
+The contributing score factors.
+Relevant historical investigation outcomes.
+Important uncertainty or innocent explanations that should be considered.
+The LLM may explain the returned evidence, but it must not invent graph edges, claim IDs, prior outcomes, or supporting facts.
+Feature 4: One bounded, tool-using investigation agent
+We will build one agent workflow, not a swarm of agents.
+Its permitted tools will include:
+GetClaim
+FindRelatedClaims
+GetEvidencePaths
+GetPriorCases
+RunCounterfactual
+RecordInvestigatorDisposition
+The agent will inspect the new claim, query FalkorDB, retrieve evidence, examine relevant precedent, and recommend a next verification step.
+It may perform a limited follow-up investigation when the available evidence requires clarification. Every tool input must be validated, and each operation must have defined limits.
+All database tools must be predefined and allowlisted. The LLM must never have unrestricted access to execute arbitrary Cypher.
+Go owns graph access, input validation, scoring, and state changes. The LLM handles bounded tool orchestration and natural-language explanations.
+The core investigation and score must remain reproducible even if the LLM times out or returns invalid output. A deterministic fallback is required.
+Feature 5: Transparent, deterministic scoring
+The score represents investigation priority, not the probability that a person committed fraud.
+For the MVP, the following rule-based scoring model will be used. Each category contributes at most once per target claim, using the strongest qualifying observation within that category.
+Evidence signal
+Points
+Shared claimant payout destination
++25
+Shared non-public device
++20
+Shared claimant phone or email
++12
+Shared address
++10
+Shared repair shop
++8
+Shared public IP address
++3
+Each additional distinct connected claim
++5, capped at +15
+At least one related claim filed within seven days
++10
+Connection to an older, human-confirmed fraud case
++15
+At least two independent strong signal categories among payout, device, contact, and address
++10
+
+The final score is the sum of the applicable contributions, capped at 100.
+Shared payout signals count only when the destination is identified as a claimant payout destination. A repair vendor's direct-settlement account must not be mistaken for a claimant's payout account.
+The score is deterministic: the same graph evidence and same rules must produce the same result.
+Score bands
+0–29: Low — insufficient evidence to prioritize the claim on the basis of this graph analysis.
+30–59: Review — additional examination may be warranted.
+60–100: High Priority — prioritize human investigation.
+A high score does not establish fraud. The interface must use investigation-oriented language throughout.
+Feature 6: Counterfactual investigation — our signature feature
+The investigator can exclude one evidence category from the analysis and recompute the score.
+The first supported interaction will be:
+What happens if the shared repair-shop relationship is ignored?
+The system will show:
+Original score and classification.
+Counterfactual score and classification.
+Score contributions removed.
+Evidence paths that remain relevant.
+Whether the remaining signals still justify investigation.
+Counterfactual analysis is deterministic. It operates on an altered analytical view of the evidence, does not delete the real graph data, and does not mutate the original claim.
+This is a mandatory feature, not a stretch goal. It is the primary differentiator of ClaimGraph.
+Feature 7: Prior investigation outcomes as graph-based memory
+An investigator can record a simulated case disposition, such as:
+Confirmed fraud.
+Not substantiated.
+Needs more information.
+The outcome and associated case will be stored in FalkorDB and retrieved in subsequent related investigations.
+Only a case explicitly marked as human-confirmed fraud receives the +15 historical-outcome contribution.
+A case that was not substantiated or remains unresolved must not receive that bonus.
+Historical outcomes are context, not automatic proof. We will not train a model or automatically change scoring weights based on them.
+Feature 8: One focused investigation dashboard
+The main screen will contain:
+Claim intake and queue: select or submit a synthetic FNOL.
+Interactive graph: explore the target claim and connected entities.
+Evidence panel: inspect relationships, paths, contributing factors, and timestamps.
+Priority panel: inspect the deterministic score and classification.
+Counterfactual control: exclude a signal and recalculate.
+Next-step panel: display the recommended verification.
+Disposition control: record a simulated human decision.
+The graph view must help investigators understand the finding; it is not decoration. The application should remain usable even if the graph contains many nodes, with relevant relationships visually emphasized.
+Feature 9: A reproducible 30-case evaluation set
+We will create a set of 30 labelled synthetic test scenarios, described in Section 7.
+The set must cover coordinated claims, legitimate shared entities, historical outcomes, multi-hop paths, counterfactual correctness, and agent/tool failures.
+Each scenario will have a known expected result. The test harness must check the returned evidence and expected classification, not just whether an API request succeeds.
+
+5. Technical architecture and graph model
+Technology choices
+Backend: Go.
+Graph database: FalkorDB.
+Database client: Official FalkorDB Go client, github.com/FalkorDB/falkordb-go/v2.
+Frontend: React and TypeScript.
+Graph visualization: Cytoscape.js.
+AI: One LLM-backed tool-using agent, with a deterministic fallback.
+Local deployment: Docker-based setup with documented configuration.
+Go will implement the API, graph ingestion, queries, investigation scoring, counterfactual calculations, tool execution, validation, and test harness.
+FalkorDB is the system of record for the graph relationships and investigation memory.
+Initial node types
+Claim
+Claimant
+Policy
+Vehicle
+RepairShop
+PayoutDestination
+ContactPoint
+Address
+Device
+IPAddress
+InvestigationCase
+Only entity types needed by the scenarios will be populated with actual synthetic relationships.
+Initial relationship types
+FILED_BY
+COVERED_BY
+INVOLVES
+REPAIRED_AT
+PAID_TO
+HAS_CONTACT
+RESIDES_AT
+USED_DEVICE
+FILED_FROM
+INVESTIGATES
+Historical case and outcome relationships will be modelled explicitly. Claim-to-claim connections will be derived from shared entities rather than artificially creating a direct fraud relationship.
+Edges and relevant records should include evidence references, source information, and timestamps when applicable.
+All personal and financial identifiers used for the demonstration will be synthetic. We will not store real banking information, real claims, or unnecessary personal data.
+Architecture principle
+FalkorDB performs the actual connected-data analysis. Go enforces the scoring rules and safe execution of tools. The LLM interprets the structured results and communicates them clearly.
+We must never depend on the LLM to invent a relationship that the graph has not returned.
+
+6. What we explicitly will NOT implement
+These exclusions protect the project from scope creep.
+Out of scope
+Multiple cooperating agents. One bounded investigator agent is enough.
+An entire insurance administration platform. No policy lifecycle management, underwriting system, or complete claims workflow.
+A production fraud prediction model. No custom model training, machine-learning pipeline, or unsupported probability claims.
+Automatic claim rejection, payout, or accusation. The product prioritizes human investigation and proposes verification steps.
+Unrestricted LLM-generated Cypher. All queries are defined and controlled by Go.
+Real insurer integrations or private datasets. We use synthetic claims and fixtures.
+External scraping and a large third-party data integration pipeline.
+Streaming infrastructure or distributed processing. No Kafka, microservice swarm, or unnecessary infrastructure.
+Advanced graph algorithms unrelated to the demo. No complex clustering suite or research-grade fraud detection system.
+A custom vector database or elaborate graph-RAG platform. The MVP's knowledge and evidence retrieval use FalkorDB graph relationships.
+Automatic retraining from investigation dispositions. Outcomes are stored and retrieved; they do not silently change the scoring model.
+A mobile application, elaborate administration portal, or multi-tenant enterprise platform.
+Excessive dashboard features. No large analytics suite, report builder, or configurable workflow designer.
+Unnecessary UI animation or elaborate graph styling. Prioritize legibility and working interactions.
+We will not sacrifice the end-to-end investigation flow to build any item in this section.
+The scope-creep rule
+Before adding a feature, ask:
+Does it directly improve the core investigation demo?
+Is it required by the official judging criteria?
+Is it necessary for correctness, security, or reliability?
+If the answer to all three is no, it does not enter the MVP.
+
+7. The 30-case synthetic test set
+The evaluation set is part of the product, not something we add at the last minute.
+Each fixture will build an isolated synthetic graph, identify a target claim, execute the real investigation pipeline, and compare the result with a predefined expectation. Isolating fixtures prevents one scenario's entities from contaminating another scenario's result.
+Cases 01–10 represent suspicious patterns. Cases 11–20 are legitimate or deliberately ambiguous controls. Cases 21–30 verify historical memory, traversal boundaries, counterfactual behavior, and operational resilience.
+The following scores assume the scoring rules in Section 4 and only the relationships explicitly defined in each fixture.
+A. Suspicious relationship patterns — cases 01–10
+ID
+Synthetic scenario
+Expected result
+T01
+Payout destination and non-public device shared across four connected claims; at least one related claim is within seven days.
+80 — High Priority. Both strong signals and the connecting paths are returned.
+T02
+Payout destination and device shared with one other claim; the claims are not within the seven-day window.
+60 — High Priority. Strong independent signals suffice without the time bonus.
+T03
+Multi-hop graph connects the target to three other claims through a shared payout destination and device.
+70 — High Priority. Return complete paths; do not require direct claim-to-claim edges.
+T04
+Payout destination and claimant contact are shared with another claim filed within seven days.
+62 — High Priority. Show the payout and contact evidence.
+T05
+Device and address are shared with one related claim within seven days.
+55 — Review. The system surfaces the evidence without claiming certainty.
+T06
+A payout/device connection leads to a previously human-confirmed fraud case. One other distinct claim is connected.
+75 — High Priority. Retrieve the prior outcome and show the relevant path.
+T07
+Target connects to two other claims through payout, contact, and address signals, with temporal proximity.
+77 — High Priority. Show independent corroborating categories.
+T08
+Several claims form a multi-hop cluster through payout and device connections, with three related claims and temporal proximity.
+80 — High Priority. Display the cluster and its evidence paths.
+T09
+Device and contact are shared with one other claim filed within seven days.
+57 — Review. Return both signals and explain their contributions.
+T10
+Payout destination and device connect the target to two other claims filed within 48 hours.
+75 — High Priority. Show all contributing relationships and timestamps.
+
+B. Legitimate and hard-negative controls — cases 11–20
+These cases are designed to ensure that ordinary shared infrastructure does not automatically become a high-priority fraud signal.
+ID
+Synthetic scenario
+Expected result
+T11
+Four other claims use the same busy repair shop, with no other shared signals or temporal clustering.
+23 — Low. Shared shop alone does not trigger escalation.
+T12
+A public IP address is shared across five claims, with no other indicators.
+18 — Low. Public-IP sharing is a weak signal.
+T13
+Four other claims share an address, with no other shared identifiers.
+25 — Low. Return the address connection without treating it as proof of wrongdoing.
+T14
+Two legitimate household members use a joint payout account and share an address. There is no temporal bonus.
+50 — Review. Surface the ambiguity; never classify it as confirmed fraud.
+T15
+Multiple claims share a company-network IP and a busy repair shop within seven days.
+36 — Review. No High Priority classification based on these weak/shared signals alone.
+T16
+Several claims use the same repair shop, but the incidents are spread over 60 days.
+23 — Low. No temporal bonus.
+T17
+One phone number is shared by two claimants, without other suspicious connections or temporal clustering.
+17 — Low. Show the shared contact as limited evidence.
+T18
+Two other claims share a public IP and repair shop with the target.
+21 — Low. Weak signals must not independently produce High Priority.
+T19
+Several claims use a repair vendor's direct-settlement account rather than a claimant payout destination.
+23 — Low. The account must not receive the shared-claimant-payout score.
+T20
+Multiple claims share an address and repair shop associated with a legitimate common facility, with no stronger identifiers or temporal bonus.
+33 — Review. Show the connections and uncertainty; do not classify as High Priority.
+
+C. Memory, outcomes, and traversal correctness — cases 21–25
+ID
+Synthetic scenario
+Expected result
+T21
+Payout destination and device are shared with one claim, but the claims are more than 30 days apart.
+60 — High Priority. No temporal points; strong independent evidence still crosses the threshold.
+T22
+Five claims share only a repair shop, spread over 60 days.
+23 — Low. Cluster breadth is capped; weak relationships do not become strong merely because the shop is busy.
+T23
+The target connects to a previously not-substantiated case through a repair shop.
+13 — Low. Retrieve the previous outcome but do not award the confirmed-fraud bonus.
+T24
+The target connects through a device to a case marked “Needs more information.”
+25 — Low. Retrieve the unresolved outcome and do not treat it as confirmed fraud.
+T25
+An investigator marks a case “Not substantiated,” then a later related claim is investigated.
+13 — Low. Retrieve the previous disposition; do not alter the scoring rules or add a confirmed-fraud bonus.
+
+D. Counterfactuals, agent resilience, and safety — cases 26–30
+ID
+Synthetic scenario
+Expected result
+T26
+A case scores 95 with payout, device, contact, shop, cluster, temporal, and corroboration signals. Exclude the shop signal while other paths still connect the claims.
+87 — High Priority. The score falls by exactly eight points; original graph data remains unchanged.
+T27
+A case scores 60 through a shared payout destination, device, one related claim, and corroboration. Exclude payout evidence while the device path still connects the claims.
+25 — Low. The score drops from 60 to 25, and the report explains the change.
+T28
+A new claim has no meaningful connections in the investigation graph.
+0 — Low. Return no fabricated paths, no invented claim IDs, and an explicit statement that no supporting connection was found.
+T29
+The LLM times out or returns malformed structured output during investigation.
+The deterministic fallback returns the real graph paths, calculated score, and expected classification. No evidence is invented.
+T30
+A tool call attempts to execute arbitrary Cypher or modify unrelated graph data.
+Reject the call. No unapproved query executes and graph state remains unchanged.
+
+Evaluation rules
+The test harness must verify:
+Exact expected score and band where specified.
+Correct connected claim IDs and evidence paths.
+No unexpected traversal beyond the configured depth.
+Correct handling of historical dispositions.
+Correct score deltas for counterfactuals.
+No false evidence when the graph or LLM returns an error.
+No high-priority result caused solely by the deliberately weak signals in the hard-negative fixtures.
+For detection evaluation, consider Review or High Priority a positive investigation alert. Report how many of T01–T10 receive an alert, and how many of T11–T20 are incorrectly marked High Priority.
+Our acceptance target is:
+All 10 known suspicious cases receive at least a Review alert.
+Zero of the 10 hard-negative controls are classified High Priority.
+All 30 scenario tests pass their individual expected behavior checks.
+These are targets for our synthetic test suite, not claims about accuracy on real insurance fraud.
+The exact score calculations and fixture outcomes must be automated in tests. They must not be manually typed into the UI.
+
+8. Demo plan: the 90-second story
+Our demo will tell one coherent story.
+0–15 seconds — The clean claim
+Submit a synthetic FNOL. The ordinary policy checks pass, making the claim look legitimate on its own.
+15–35 seconds — The graph reveals a pattern
+Click Investigate. FalkorDB finds multiple connected claims through payout and device relationships. The UI draws actual evidence paths.
+35–55 seconds — The agent explains the findings
+Display the score, its contributing factors, the related claim IDs, and a previous relevant investigation outcome. The explanation links directly to graph evidence.
+55–75 seconds — Challenge the result
+Exclude the repair-shop signal. The score is recalculated and the interface shows what changed and what evidence remains.
+75–90 seconds — Recommend an action
+The agent proposes the next verification step. The investigator records a simulated disposition, which becomes available for future related cases.
+The demo must run against our synthetic graph every time. We will use known fixtures to make the scenario reproducible, but the graph queries and scores must be real.
+
+9. Four-day implementation plan
+The main coding and design work begins at the official kickoff. Before kickoff, preparation is limited to permitted planning, documentation, diagrams, research, and a build checklist. See the official hackathon rules.
+Day 1 — October 15: Graph foundation
+Start FalkorDB and the Go API.
+Implement the initial schema and synthetic graph seeding.
+Implement FNOL validation and idempotent ingestion.
+Implement a real shared-entity/multi-hop query.
+Prove that a new claim returns actual connected claims and paths.
+Gate: The graph investigation works without an LLM or a frontend.
+Day 2 — October 16: Investigation engine
+Implement the deterministic score and risk bands.
+Implement evidence attribution and path retrieval.
+Implement historical outcome retrieval.
+Implement counterfactual recomputation.
+Integrate the single bounded agent with its allowlisted tools.
+Implement the deterministic fallback.
+Gate: One target claim produces a correct, explainable investigation report.
+Day 3 — October 17: Product experience
+Build the claim intake and investigation dashboard.
+Connect the interface to the Go API.
+Implement interactive path inspection.
+Add the counterfactual control and outcome capture.
+Run the 30-case evaluation suite and fix failures.
+Gate: The complete 90-second demo works from beginning to end.
+Day 4 — October 18: Reliability and submission
+Run the entire test suite.
+Fix critical bugs and reduce false-positive behavior in hard-negative cases.
+Verify failure handling and clean startup.
+Deploy the application or finalize the documented local setup.
+Write the README and graph-model explanation.
+Record and review the demo video.
+Submit the repository, demo, and required artifacts ahead of the deadline.
+Gate: The project can be started and evaluated by another person using the documented instructions.
+
+10. Definition of done
+ClaimGraph is complete only when all of the following are true:
+A synthetic FNOL can be submitted through the application or documented API.
+The claim and its associated entities are stored in FalkorDB.
+The Go backend returns real multi-hop paths and related claims.
+The investigation-priority score is calculated deterministically.
+Each score contribution can be traced to evidence.
+The agent uses the approved graph tools and respects their limits.
+An LLM failure does not fabricate findings or break the core demo.
+The counterfactual control recomputes the score without modifying the original graph.
+Previous investigation outcomes are retrievable, with unresolved outcomes handled correctly.
+A human can record a simulated case disposition.
+All 30 scenario tests pass.
+The application does not mark any of the 10 hard-negative controls High Priority.
+Synthetic data is used throughout; no real claim or banking data is required.
+The repository includes setup instructions, the graph data model, key Cypher queries, test instructions, and a clear architecture explanation.
+The demo video shows the actual running application.
+Someone other than the developer can follow the setup instructions and reproduce the demo.
+A beautiful interface does not compensate for a fake graph query. An impressive agent explanation does not compensate for incorrect evidence. A working backend does not compensate for a demo that fails to run.
+We need all three: real graph reasoning, trustworthy investigation results, and a reliable demonstration.
+
+11. Official submission requirements and project documentation
+We will verify the current requirements against the official hackathon page and official rules before submitting.
+The submission package will contain:
+A public source-code repository.
+A clear README and clean-start setup instructions.
+The graph data model and explanation of how relationships are traversed.
+The important Cypher queries and investigation scoring rules.
+Instructions for running all 30 tests.
+A demo video showing a real investigation.
+A live deployment or complete local setup path, as allowed by the rules.
+The selected hackathon track.
+A concise technical project write-up explaining why FalkorDB is essential and showing actual evaluation results.
+We will also prepare a project blog post. It should explain the problem, graph design, agent tool boundaries, counterfactual feature, implementation decisions, and the actual results of the 30-case evaluation set. The post must report what was tested rather than making unsupported real-world fraud detection claims.
+
+12. The north-star rule
+Whenever we are uncertain about what to build next, return to this statement:
+A new insurance claim enters. FalkorDB discovers relationships that individual claim checks miss. A bounded agent reconstructs the evidence. A counterfactual tests whether the conclusion survives without a suspicious signal. The system recommends the next verification, a human records the outcome, and the next investigation can retrieve that experience.
+If a task makes this flow more correct, more explainable, more reliable, or easier to demonstrate, prioritize it.
+If a task does not directly support this flow or a required judging criterion, do not build it during the hackathon.
+The goal is not to build the largest application. The goal is to build the smallest complete application that convincingly proves this idea works.
+That is ClaimGraph.
+

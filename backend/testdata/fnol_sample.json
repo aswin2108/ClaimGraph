@@ -1,0 +1,22 @@
+{
+  "claim_id": "CLM-1006",
+  "claimant_id": "CLM-DRV-06",
+  "claimant_name": "Fay Gordon",
+  "policy_id": "POL-5006",
+  "policy_start": "2026-01-01",
+  "policy_end": "2026-12-31",
+  "policy_status": "active",
+  "vin": "1HGSYN00000000006",
+  "incident_date": "2026-09-08",
+  "filing_date": "2026-09-09",
+  "incident_location": "Synthetic City",
+  "loss_type": "collision",
+  "amount": 4500,
+  "payout_account_id": "PAY-01",
+  "payout_type": "claimant",
+  "repair_shop_id": "SHOP-01",
+  "tow_provider_id": "TOW-01",
+  "device_id": "DEV-01",
+  "device_is_public": false,
+  "ip_address": "203.0.113.50"
+}
