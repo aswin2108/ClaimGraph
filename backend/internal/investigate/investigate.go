@@ -1,8 +1,8 @@
 // Package investigate discovers claims connected to a target claim through
 // shared entities and returns the actual connecting paths.
 //
-// FalkorDB matches the shared-entity links (one claim-to-claim transition per
-// query); Go chains up to MaxHops transitions, enforces limits and keeps
+// FalkorDB performs the multi-hop traversal (see traverse.go) and returns complete
+// evidence paths; Go enforces limits, applies counterfactual exclusions and keeps
 // results deterministic. No claim-to-claim edge is ever stored or invented.
 package investigate
 
@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"claimgraph/internal/ingest"
 
@@ -19,12 +20,10 @@ import (
 
 // Limits that keep an investigation bounded.
 const (
-	MaxHopsLimit       = 3 // maximum claim-to-claim transitions
-	DefaultMaxHops     = 3
-	MaxRelatedClaims   = 50  // related claims returned
-	MaxPathsPerClaim   = 5   // shortest paths kept per related claim
-	maxPartialPerClaim = 50  // candidate paths built per claim before trimming (bounds fan-out)
-	rowLimitPerHop     = 500 // rows fetched per branch per hop
+	MaxHopsLimit     = 3 // maximum claim-to-claim transitions
+	DefaultMaxHops   = 3
+	MaxRelatedClaims = 50 // related claims returned
+	MaxPathsPerClaim = 5  // shortest paths kept per related claim
 )
 
 // ErrClaimNotFound is returned when the target claim is not in the graph.
@@ -40,6 +39,7 @@ type Step struct {
 	EntityID      string `json:"entity_id"`
 	EntitySubtype string `json:"entity_subtype,omitempty"` // payout type or contact type
 	EntityPublic  *bool  `json:"entity_public,omitempty"`  // device / IP visibility
+	EntityClaims  int    `json:"entity_claims,omitempty"`  // evidence links into the entity (claims using it)
 	FromRel       string `json:"from_rel"`
 	ToRel         string `json:"to_rel"`
 	FromEvidence  string `json:"from_evidence,omitempty"`
@@ -80,15 +80,55 @@ type Result struct {
 	ExcludedCategory string         `json:"excluded_category,omitempty"` // set for counterfactual views
 	MaxHops          int            `json:"max_hops"`
 	RelatedClaims    []RelatedClaim `json:"related_claims"`
-	Truncated        bool           `json:"truncated"` // a limit cut off some results
-	Message          string         `json:"message,omitempty"`
+	Truncated        bool           `json:"truncated"`       // a row limit may have hidden evidence (data may be incomplete)
+	PathsTrimmed     bool           `json:"paths_trimmed"`   // some claims show only MaxPathsPerClaim of their equally short paths
+	ConnectedTotal   int            `json:"connected_total"` // every connected claim; RelatedClaims lists at most MaxRelatedClaims
+	// Connected is every connected claim (not only the listed ones). Scoring uses it for
+	// breadth, timing and prior outcomes, so the list cap never changes a score.
+	Connected []ConnectedClaim `json:"-"`
+	Message   string           `json:"message,omitempty"`
+	Stats     *TraversalStats  `json:"traversal_stats,omitempty"` // how the answer was computed (S2)
+	// Infrastructure the target uses (see InfrastructureMinClaims): reported with exact
+	// counts instead of one related claim per user. Nil when there is none.
+	InfrastructureLinks []InfrastructureLink `json:"infrastructure_links,omitempty"`
 }
 
-type partial struct {
-	steps []Step
+// ConnectedClaim is the minimal record of a connected claim used for scoring.
+type ConnectedClaim struct {
+	ClaimID    string
+	Hops       int
+	FilingDate string
 }
 
-type claimInfo struct{ filed, incident string }
+func connectedOf(rcs []RelatedClaim) []ConnectedClaim {
+	out := make([]ConnectedClaim, len(rcs))
+	for i, rc := range rcs {
+		out[i] = ConnectedClaim{ClaimID: rc.ClaimID, Hops: rc.Hops, FilingDate: rc.FilingDate}
+	}
+	return out
+}
+
+// InfrastructureLink is a weak/context identifier the target shares with many claims.
+type InfrastructureLink struct {
+	Category      string `json:"category"`
+	EntityType    string `json:"entity_type"`
+	EntityID      string `json:"entity_id"`
+	EntitySubtype string `json:"entity_subtype,omitempty"`
+	EntityPublic  *bool  `json:"entity_public,omitempty"`
+	Rel           string `json:"rel"`
+	OtherClaims   int    `json:"other_claims"` // claims other than the target that use it
+	EvidenceID    string `json:"evidence_id,omitempty"`
+	RecordedAt    string `json:"recorded_at,omitempty"`
+}
+
+// TraversalStats reports how much work FalkorDB did for an investigation. Timing varies
+// between runs; it is never part of the evidence or the score.
+type TraversalStats struct {
+	Engine        string `json:"engine"`         // where the multi-hop traversal ran
+	Queries       int    `json:"queries"`        // FalkorDB round trips
+	PathsReturned int    `json:"paths_returned"` // evidence paths FalkorDB returned before shortest-path selection
+	DurationMs    int64  `json:"duration_ms"`    // wall clock for the whole investigation
+}
 
 // FindRelatedClaims returns claims connected to claimID through shared entities
 // within maxHops claim-to-claim transitions (1..3; 0 means the default of 3).
@@ -97,8 +137,8 @@ func FindRelatedClaims(g *falkordb.Graph, claimID string, maxHops int) (*Result,
 }
 
 // FindRelatedClaimsExcluding is FindRelatedClaims on an altered, read-only analytical
-// view: every step whose evidence category equals excludeCategory is ignored (see
-// SignalCategory). The graph itself is never modified. "" excludes nothing.
+// view: every path that uses an evidence category equal to excludeCategory is ignored
+// (see SignalCategory). The graph itself is never modified. "" excludes nothing.
 func FindRelatedClaimsExcluding(g *falkordb.Graph, claimID string, maxHops int, excludeCategory string) (*Result, error) {
 	if excludeCategory != "" && !ValidCategory(excludeCategory) {
 		return nil, fmt.Errorf("unknown evidence category %q", excludeCategory)
@@ -112,6 +152,7 @@ func FindRelatedClaimsExcluding(g *falkordb.Graph, claimID string, maxHops int, 
 	if maxHops < 1 || maxHops > MaxHopsLimit {
 		return nil, fmt.Errorf("max_hops must be between 1 and %d", MaxHopsLimit)
 	}
+	start := time.Now()
 	targetFiled, err := requireClaim(g, claimID)
 	if err != nil {
 		return nil, err
@@ -120,83 +161,93 @@ func FindRelatedClaimsExcluding(g *falkordb.Graph, claimID string, maxHops int, 
 	res := &Result{TargetClaim: claimID, TargetFilingDate: targetFiled, ExcludedCategory: excludeCategory,
 		MaxHops: maxHops, RelatedClaims: []RelatedClaim{}}
 
-	visited := map[string]bool{claimID: true}
-	// frontier: claim -> all shortest paths that reach it (target has the empty path).
-	frontier := map[string][]partial{claimID: {{}}}
-	reached := map[string]*RelatedClaim{}
-	info := map[string]claimInfo{}
+	chains, info, cut, err := discover(g, claimID, maxHops, excludeCategory)
+	if err != nil {
+		return nil, err
+	}
+	res.Truncated = cut
+	if res.InfrastructureLinks, err = infrastructure(g, claimID, excludeCategory); err != nil {
+		return nil, err
+	}
+	queries := 3 // target lookup + infrastructure summary + single-transition paths
+	if maxHops >= 2 {
+		queries++ // 2..maxHops transition shapes, one UNION ALL query
+	}
+	defer func() {
+		res.Stats = &TraversalStats{Engine: "falkordb_in_database", Queries: queries, PathsReturned: len(chains),
+			DurationMs: time.Since(start).Milliseconds()}
+	}()
 
-	for hop := 1; hop <= maxHops && len(frontier) > 0; hop++ {
-		ids := make([]any, 0, len(frontier))
-		for id := range frontier {
-			ids = append(ids, id)
+	for claim, shortest := range shortestOnly(chains, excludeCategory) {
+		hops := len(shortest[0])
+		paths, trimmed := pathsFor(shortest, hops)
+		if trimmed {
+			res.PathsTrimmed = true
 		}
-		sort.Slice(ids, func(i, j int) bool { return ids[i].(string) < ids[j].(string) })
-
-		steps, filed, rowsCut, err := oneHop(g, ids)
-		if err != nil {
-			return nil, err
-		}
-		if rowsCut {
-			res.Truncated = true
-		}
-		for k, v := range filed {
-			info[k] = v
-		}
-
-		next := map[string][]partial{}
-		for _, st := range steps {
-			if visited[st.ToClaim] {
-				continue // already reached on a shorter (or same-level earlier) hop
-			}
-			if excludeCategory != "" && SignalCategory(st) == excludeCategory {
-				continue // counterfactual: this evidence is ignored in the analytical view
-			}
-			for _, parent := range frontier[st.FromClaim] {
-				if hop > 1 && len(next[st.ToClaim]) >= maxPartialPerClaim {
-					res.Truncated = true // bound path fan-out on dense graphs
-					continue
-				}
-				chain := append(append([]Step{}, parent.steps...), st)
-				next[st.ToClaim] = append(next[st.ToClaim], partial{steps: chain})
-			}
-		}
-
-		for claim, paths := range next {
-			visited[claim] = true
-			rc := &RelatedClaim{ClaimID: claim, Hops: hop, FilingDate: info[claim].filed, IncidentDate: info[claim].incident}
-			sort.Slice(paths, func(i, j int) bool { return describe(paths[i].steps) < describe(paths[j].steps) })
-			for _, p := range paths {
-				// Direct (1-hop) paths are never capped: scoring needs every signal category.
-				if hop > 1 && len(rc.Paths) == MaxPathsPerClaim {
-					res.Truncated = true
-					break
-				}
-				rc.Paths = append(rc.Paths, Path{Hops: hop, Steps: p.steps, Description: describe(p.steps)})
-			}
-			reached[claim] = rc
-		}
-		frontier = next
+		res.RelatedClaims = append(res.RelatedClaims, RelatedClaim{
+			ClaimID: claim, Hops: hops, FilingDate: info[claim].filed, IncidentDate: info[claim].incident, Paths: paths})
 	}
 
-	for _, rc := range reached {
-		res.RelatedClaims = append(res.RelatedClaims, *rc)
+	// When more than MaxRelatedClaims are connected, keep the ones with the strongest
+	// evidence (then the closest, then by id), so a very busy repair shop can never push a
+	// payout or device link, direct or two transitions away, out of the list. The kept
+	// claims are presented closest first, strongest evidence first, then by id.
+	strength := make(map[string]int, len(res.RelatedClaims))
+	for _, rc := range res.RelatedClaims {
+		strength[rc.ClaimID] = strongestRank(rc)
 	}
-	sort.Slice(res.RelatedClaims, func(i, j int) bool {
-		a, b := res.RelatedClaims[i], res.RelatedClaims[j]
-		if a.Hops != b.Hops {
-			return a.Hops < b.Hops
-		}
-		return a.ClaimID < b.ClaimID
-	})
+	order := func(strengthFirst bool) {
+		sort.Slice(res.RelatedClaims, func(i, j int) bool {
+			a, b := res.RelatedClaims[i], res.RelatedClaims[j]
+			if strengthFirst && strength[a.ClaimID] != strength[b.ClaimID] {
+				return strength[a.ClaimID] < strength[b.ClaimID]
+			}
+			if a.Hops != b.Hops {
+				return a.Hops < b.Hops
+			}
+			if strength[a.ClaimID] != strength[b.ClaimID] {
+				return strength[a.ClaimID] < strength[b.ClaimID]
+			}
+			return a.ClaimID < b.ClaimID
+		})
+	}
+	res.Connected = connectedOf(res.RelatedClaims)
+	res.ConnectedTotal = len(res.Connected)
 	if len(res.RelatedClaims) > MaxRelatedClaims {
-		res.RelatedClaims = res.RelatedClaims[:MaxRelatedClaims]
-		res.Truncated = true
+		order(true)
+		res.RelatedClaims = res.RelatedClaims[:MaxRelatedClaims] // listing only; scoring uses Connected
 	}
+	order(false)
 	if len(res.RelatedClaims) == 0 {
-		res.Message = "No supporting connection to other claims was found in the graph."
+		res.Message = noConnectionMessage
 	}
 	return res, nil
+}
+
+// categoryRank orders evidence categories by scoring weight (lower = stronger).
+var categoryRank = map[string]int{
+	CatPayout: 0, CatDevice: 1, CatContact: 2, CatAddress: 3, CatRepairShop: 4, CatPublicIP: 5,
+}
+
+func strongestRank(rc RelatedClaim) int {
+	best := len(categoryRank) + 1 // context-only categories rank last
+	for _, p := range rc.Paths {
+		for _, s := range p.Steps {
+			if r, ok := categoryRank[SignalCategory(s)]; ok && r < best {
+				best = r
+			}
+		}
+	}
+	return best
+}
+
+func validIDs(ids ...string) bool {
+	for _, id := range ids {
+		if !ingest.ValidID(id) {
+			return false
+		}
+	}
+	return true
 }
 
 // requireClaim confirms the claim exists and returns its filing date.
@@ -215,48 +266,16 @@ func requireClaim(g *falkordb.Graph, claimID string) (string, error) {
 	return str(v), nil
 }
 
-// oneHop runs the parameterized one-hop query for every claim in ids.
-// The bool is true when the per-branch row limit was reached (results may be incomplete).
-func oneHop(g *falkordb.Graph, ids []any) ([]Step, map[string]claimInfo, bool, error) {
-	r, err := g.ROQuery(cypherOneHop, map[string]any{"ids": ids, "row_limit": rowLimitPerHop + 1}, nil)
-	if err != nil {
-		return nil, nil, false, fmt.Errorf("one-hop query: %w", err)
+// pathKey is a total order over paths: the description first, then the evidence ids and
+// timestamps, so two paths that read the same but rest on different evidence records are
+// always returned in the same order.
+func pathKey(steps []Step) string {
+	var b strings.Builder
+	b.WriteString(describe(steps))
+	for _, s := range steps {
+		b.WriteString("|" + s.FromEvidence + "|" + s.ToEvidence + "|" + s.FromAt + "|" + s.ToAt)
 	}
-	var steps []Step
-	infos := map[string]claimInfo{}
-	for r.Next() {
-		rec := r.Record()
-		get := func(k string) any { v, _ := rec.Get(k); return v }
-		st := Step{
-			FromClaim: str(get("from_claim")), ToClaim: str(get("to_claim")),
-			FromClaimant: str(get("from_claimant")), ToClaimant: str(get("to_claimant")),
-			EntityType: str(get("entity_type")), EntityID: str(get("entity_id")),
-			EntitySubtype: str(get("entity_subtype")),
-			FromRel:       str(get("from_rel")), ToRel: str(get("to_rel")),
-			FromEvidence: str(get("from_evidence")), ToEvidence: str(get("to_evidence")),
-			FromAt: str(get("from_at")), ToAt: str(get("to_at")),
-		}
-		if b, ok := get("entity_public").(bool); ok {
-			st.EntityPublic = &b
-		}
-		steps = append(steps, st)
-		infos[st.ToClaim] = claimInfo{filed: str(get("to_filed")), incident: str(get("to_incident"))}
-	}
-	// Deterministic order regardless of database row order.
-	sort.Slice(steps, func(i, j int) bool {
-		a, b := steps[i], steps[j]
-		if a.FromClaim != b.FromClaim {
-			return a.FromClaim < b.FromClaim
-		}
-		if a.ToClaim != b.ToClaim {
-			return a.ToClaim < b.ToClaim
-		}
-		if a.EntityType != b.EntityType {
-			return a.EntityType < b.EntityType
-		}
-		return a.EntityID < b.EntityID
-	})
-	return steps, infos, len(steps) > rowLimitPerHop, nil
+	return b.String()
 }
 
 func describe(steps []Step) string {

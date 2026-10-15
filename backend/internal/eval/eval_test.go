@@ -226,6 +226,7 @@ func check(t *testing.T, s scenario) (*scoring.Report, []string) {
 	if err != nil {
 		t.Fatalf("%s analyze: %v", s.id, err)
 	}
+	assertEngineParity(t, g, "T")
 	var bad []string
 	if r.Score != s.score || r.Band != s.band {
 		bad = append(bad, fmt.Sprintf("score/band %d %s, want %d %s", r.Score, r.Band, s.score, s.band))

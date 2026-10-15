@@ -67,6 +67,7 @@ func TestT25RecordedDispositionIsRetrievedWithoutChangingScoring(t *testing.T) {
 		t.Fatal(err)
 	}
 	load(t, g, scenario{claims: []*ingest.FNOL{mk("T", "2026-09-10", shop("S"))}}) // the later related claim
+	assertEngineParity(t, g, "T")
 
 	r, err := scoring.Analyze(g, "T", 3)
 	if err != nil {
@@ -115,6 +116,7 @@ func TestT26ExcludingRepairShopDropsExactlyEight(t *testing.T) {
 		return mk(id, filed, payout("P"), device("D"), phone("+1-555-0126"), shop("S"))
 	}
 	load(t, g, scenario{claims: []*ingest.FNOL{all("T", "2026-09-10"), all("B", "2026-09-11"), all("C", "2026-09-12")}})
+	assertEngineParity(t, g, "T")
 	before := snapshot(t, g)
 
 	cf, err := scoring.RunCounterfactual(g, "T", 3, "repair_shop")
@@ -139,6 +141,7 @@ func TestT27ExcludingPayoutDropsSixtyToTwentyFive(t *testing.T) {
 	g := isolatedGraph(t, "T27")
 	load(t, g, scenario{claims: []*ingest.FNOL{
 		mk("T", "2026-09-10", payout("P"), device("D")), mk("B", "2026-07-01", payout("P"), device("D"))}})
+	assertEngineParity(t, g, "T")
 	before := snapshot(t, g)
 
 	cf, err := scoring.RunCounterfactual(g, "T", 3, "payout")

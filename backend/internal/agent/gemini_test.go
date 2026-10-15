@@ -100,8 +100,8 @@ func TestGeminiRequestShapeAndFunctionCallRoundTrip(t *testing.T) {
 	// --- first request: tools, system prompt, AUTO mode, key only in a header ---
 	req := f.bodies[0]
 	decls := req["tools"].([]any)[0].(map[string]any)["functionDeclarations"].([]any)
-	if len(decls) != 6 {
-		t.Fatalf("want 6 declared tools, got %d", len(decls))
+	if len(decls) != len(Specs()) {
+		t.Fatalf("want %d declared tools, got %d", len(Specs()), len(decls))
 	}
 	d0 := decls[0].(map[string]any)
 	schema := d0["parametersJsonSchema"].(map[string]any)

@@ -19,6 +19,7 @@ import (
 
 	"claimgraph/internal/agent"
 	"claimgraph/internal/disposition"
+	"claimgraph/internal/graphalgo"
 	"claimgraph/internal/ingest"
 	"claimgraph/internal/investigate"
 
@@ -80,6 +81,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/claims/{id}/counterfactual", s.handleCounterfactual)
 	s.mux.HandleFunc("POST /api/claims/{id}/disposition", s.handleDisposition)
 	s.mux.HandleFunc("POST /api/claims/{id}/agent", s.handleAgent)
+	s.mux.HandleFunc("GET /api/claims/{id}/ring", s.handleRing)
+	s.mux.HandleFunc("GET /api/claims/{id}/link/{other}", s.handleStrongestLink)
+	s.mux.HandleFunc("GET /api/rings", s.handleRings)
 }
 
 // ---- response helpers ----
@@ -107,8 +111,12 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 	switch {
 	case errors.As(err, &ve):
 		writeError(w, http.StatusBadRequest, "invalid FNOL", ve.Problems...)
-	case errors.Is(err, investigate.ErrClaimNotFound):
+	case errors.Is(err, investigate.ErrClaimNotFound), errors.Is(err, graphalgo.ErrClaimNotFound):
 		writeError(w, http.StatusNotFound, "claim not found")
+	case errors.Is(err, graphalgo.ErrOverlayMissing):
+		writeError(w, http.StatusServiceUnavailable, graphalgo.ErrOverlayMissing.Error())
+	case errors.Is(err, graphalgo.ErrTimeout), errors.Is(err, investigate.ErrTraversalTimeout):
+		writeError(w, http.StatusServiceUnavailable, "the graph query took too long; try again or narrow the request")
 	case errors.As(err, &br):
 		writeError(w, http.StatusBadRequest, br.msg)
 	case errors.Is(err, agent.ErrInvalid):

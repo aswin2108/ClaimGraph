@@ -5,6 +5,8 @@ package seed
 import (
 	"fmt"
 
+	"claimgraph/internal/ingest"
+
 	"github.com/FalkorDB/falkordb-go/v2"
 )
 
@@ -53,6 +55,9 @@ var claims = []claim{
 // Run seeds the graph and returns the number of statements executed.
 func Run(g *falkordb.Graph) (int, error) {
 	n := 0
+	if err := ingest.EnsureIndexes(g); err != nil {
+		return n, err
+	}
 	exec := func(q string, p map[string]interface{}) error {
 		if _, err := g.Query(q, p, nil); err != nil {
 			return fmt.Errorf("%w (query: %s)", err, q)
@@ -139,6 +144,10 @@ func Run(g *falkordb.Graph) (int, error) {
 				return n, err
 			}
 		}
+	}
+	// Labels and evidence costs used by the graph algorithms (WCC, MSF, SPpaths).
+	if err := ingest.EnsureOverlay(g); err != nil {
+		return n, err
 	}
 	return n, nil
 }

@@ -114,7 +114,7 @@ func TestIngestIdempotent(t *testing.T) {
 		v, _ := res.Record().GetByIndex(0)
 		return v.(int64)
 	}
-	if n := count(`MATCH (n) RETURN count(n)`); n != 11 {
+	if n := count(`MATCH (n) WHERE NOT n:GraphMeta RETURN count(n)`); n != 11 { // GraphMeta = version marker
 		t.Errorf("want 11 nodes after double ingest, got %d", n)
 	}
 	if n := count(`MATCH ()-[r]->() RETURN count(r)`); n != 10 {

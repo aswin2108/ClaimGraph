@@ -17,6 +17,26 @@ const (
 	CatUnknown      = "unknown"
 )
 
+// InfrastructureMinClaims: an identifier in a weak or context-only category (repair shop,
+// public IP, vendor settlement account, public device, private IP) that MORE than this many
+// claims use is shared infrastructure (a busy shop, a mobile-carrier NAT address, a
+// kiosk). It still counts once as weak evidence about the target, but it is not treated
+// as a link to the individual claims that also use it: those claims are not listed as
+// related, earn no breadth or timing points, and are not expanded in multi-hop paths.
+// Strong categories (payout, device, contact, address) are never treated as
+// infrastructure: a payout account shared by 30 claims is a strong signal, not noise.
+// The value is above every T01-T30 fixture (at most 6 claims share an identifier there).
+const InfrastructureMinClaims = 20
+
+// WeakOrContext reports whether a category can be infrastructure.
+func WeakOrContext(category string) bool {
+	switch category {
+	case CatRepairShop, CatPublicIP, CatVendorPayout, CatPublicDevice, CatPrivateIP, CatTowProvider:
+		return true
+	}
+	return false
+}
+
 // ScoringCategories are the six categories that can contribute points
 // and that an investigator may exclude in a counterfactual.
 var ScoringCategories = []string{CatPayout, CatDevice, CatContact, CatAddress, CatRepairShop, CatPublicIP}

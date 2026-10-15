@@ -2,6 +2,7 @@ package scoring
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"claimgraph/internal/ingest"
@@ -62,16 +63,27 @@ func TestDenseLayersStayBounded(t *testing.T) {
 			t.Fatalf("%s kept %d paths, cap is 5", rc.ClaimID, len(rc.Paths))
 		}
 	}
-	if !r.Investigation.Truncated {
-		t.Error("truncation must be reported when fan-out limits are hit")
+	// Aggregated traversal takes every reached claim in: 25 (device) + 25 (payout via layer 1)
+	// = 50, complete. Layer 3 hangs off a 50-claim repair shop (infrastructure) and is not a
+	// connection. Only the example paths per claim are trimmed, and the result says so.
+	inv := r.Investigation
+	if inv.Truncated || !inv.PathsTrimmed || inv.ConnectedTotal != 50 || r.ConnectedClaims != 50 {
+		t.Errorf("want complete (not truncated), paths trimmed, 50 connected; got truncated=%v trimmed=%v total=%d scored=%d",
+			inv.Truncated, inv.PathsTrimmed, inv.ConnectedTotal, r.ConnectedClaims)
+	}
+	for _, rc := range inv.RelatedClaims {
+		if rc.ClaimID[0] == 'C' {
+			t.Fatalf("%s is reachable only through infrastructure and must not be a connection", rc.ClaimID)
+		}
 	}
 	if r.Score > 100 {
 		t.Fatalf("score above cap: %d", r.Score)
 	}
 }
 
-// Hitting the row limit must be reported, never silent.
-func TestRowLimitReported(t *testing.T) {
+// A shop used by hundreds of claims is shared infrastructure: it counts once (+8), its
+// users are not connections (no breadth, no timing points) and nothing is truncated.
+func TestBusyShopCountsOnceAsInfrastructure(t *testing.T) {
 	if testing.Short() {
 		t.Skip("slow")
 	}
@@ -85,7 +97,45 @@ func TestRowLimitReported(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !r.Investigation.Truncated || r.Score > 100 {
-		t.Fatalf("expected truncation flag on a 519-neighbour shop; truncated=%v score=%d", r.Investigation.Truncated, r.Score)
+	if r.Investigation.Truncated || r.Score != PtsRepairShop || r.Band != BandLow || len(r.Investigation.RelatedClaims) != 0 {
+		t.Fatalf("want shop only (8, Low, no connections, complete); got score %d %s, %d related, truncated=%v",
+			r.Score, r.Band, len(r.Investigation.RelatedClaims), r.Investigation.Truncated)
+	}
+	links := r.Investigation.InfrastructureLinks
+	if len(links) != 1 || links[0].OtherClaims != 519 {
+		t.Fatalf("the shop must be summarized with its exact user count: %+v", links)
+	}
+	if !strings.Contains(strings.Join(r.Uncertainty, " "), "shared infrastructure used by 519 other claims") {
+		t.Errorf("the report must explain the infrastructure rule: %v", r.Uncertainty)
+	}
+}
+
+// Timing and breadth come only from real connections: a claim filed the same week at a
+// busy shop earns no temporal points, while a payout link still counts in full.
+func TestInfrastructureDoesNotInflateBreadthOrTiming(t *testing.T) {
+	g := scratch(t, "claimgraph_test_scoring_infra")
+	if _, err := ingest.Ingest(g, mk("T", "2026-09-10", shop("SHOP-BUSY"), payout("PAY-T"))); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 25; i++ { // all filed within 7 days of T
+		if _, err := ingest.Ingest(g, mk(fmt.Sprintf("S%02d", i), "2026-09-12", shop("SHOP-BUSY"))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := ingest.Ingest(g, mk("P", "2026-07-01", payout("PAY-T"))); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Analyze(g, "T", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// payout 25 + shop 8 (once, as infrastructure) + one connected claim 5 = 38; no timing bonus.
+	if r.Score != PtsPayout+PtsRepairShop+PtsPerClaim || r.ConnectedClaims != 1 {
+		t.Fatalf("want 38 with 1 connected claim, got %d with %d: %+v", r.Score, r.ConnectedClaims, r.Factors)
+	}
+	for _, f := range r.Factors {
+		if f.Name == FTemporal {
+			t.Fatal("claims reached only through a busy shop must not earn the timing bonus")
+		}
 	}
 }

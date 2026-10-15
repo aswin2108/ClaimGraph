@@ -1,0 +1,23 @@
+{
+  "claim_id": "CLM-120001",
+  "claimant_id": "DRV-000011",
+  "claimant_name": "Rowan Rossi",
+  "policy_id": "POL-0000011",
+  "policy_start": "2026-09-05",
+  "policy_end": "2027-09-05",
+  "policy_status": "active",
+  "vin": "SYN00000000000011",
+  "incident_date": "2026-10-12",
+  "filing_date": "2026-10-14",
+  "incident_location": "Mocksville",
+  "loss_type": "collision",
+  "amount": 12764,
+  "payout_account_id": "ACCT-0000014",
+  "payout_type": "claimant",
+  "repair_shop_id": "SHOP-0017",
+  "contact_type": "phone",
+  "contact_value": "+1-555-0000011",
+  "address_id": "ADDR-R000010",
+  "device_id": "DEV-0000011",
+  "ip_address": "2001:db8:fffe:a::1"
+}

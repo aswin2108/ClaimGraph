@@ -14,6 +14,7 @@ import (
 
 	"claimgraph/internal/claims"
 	"claimgraph/internal/disposition"
+	"claimgraph/internal/graphalgo"
 	"claimgraph/internal/investigate"
 	"claimgraph/internal/scoring"
 
@@ -31,7 +32,9 @@ const (
 	MaxViolations      = 3 // scope/allowlist violations before the run is aborted
 )
 
-// The six allowlisted tool names. Nothing else can be executed.
+// The eight allowlisted tool names. Nothing else can be executed. The last two run
+// FalkorDB graph algorithms (algo.WCC + algo.MSF, algo.SPpaths); all are read-only except
+// RecordInvestigatorDisposition, which only relays a human's decision.
 const (
 	ToolGetClaim          = "GetClaim"
 	ToolFindRelatedClaims = "FindRelatedClaims"
@@ -39,6 +42,17 @@ const (
 	ToolGetPriorCases     = "GetPriorCases"
 	ToolRunCounterfactual = "RunCounterfactual"
 	ToolRecordDisposition = "RecordInvestigatorDisposition"
+	ToolGetClaimRing      = "GetClaimRing"
+	ToolGetStrongestLink  = "GetStrongestLink"
+)
+
+// Output caps for the algorithm tools (the full result is available through the API).
+const (
+	maxRelatedToModel      = 20
+	maxPathsToModel        = 2
+	maxRingMembersToModel  = 25
+	maxRingEntitiesToModel = 10
+	maxBackboneToModel     = 30
 )
 
 // Decision is a disposition explicitly supplied by a human investigator for this run.
@@ -78,7 +92,7 @@ type Toolbox struct {
 	target   string
 	decision *Decision
 
-	known      map[string]bool // claims the agent may reference: target + discovered related claims
+	known      map[string]bool // claims the agent may reference: target + claims revealed by FindRelatedClaims, GetClaimRing or GetStrongestLink
 	related    *investigate.Result
 	entityIDs  map[string]bool // entity ids revealed by evidence tools this run
 	seen       map[string]bool // every identifier token the model has been shown this run
@@ -116,6 +130,11 @@ func Specs() []ToolSpec {
 		{Name: ToolRunCounterfactual, Description: "Read-only what-if: recompute the investigation-priority score as if one evidence category were ignored. Does not change any data.",
 			Properties: map[string]any{"claim_id": id, "exclude_signal_type": map[string]any{"type": "string", "enum": investigate.ScoringCategories}},
 			Required:   []string{"claim_id", "exclude_signal_type"}},
+		{Name: ToolGetClaimRing, Description: "Run the weakly-connected-components graph algorithm over strong evidence only (claimant payout accounts, private devices, phone/email, addresses, same claimant) and return the ring that contains the target claim, at ANY depth: members, shared identifiers, the identifier shared by the most members, filing span, recorded outcomes, and the minimum spanning backbone of evidence links. Repair shops and IP addresses are excluded. Ring membership is context, not proof of wrongdoing, and does not change the score.",
+			Properties: map[string]any{"claim_id": id}, Required: []string{"claim_id"}},
+		{Name: ToolGetStrongestLink, Description: "Run a weighted shortest-path graph algorithm to find the strongest evidence chain between the target claim and another claim already revealed in this run (by FindRelatedClaims, GetClaimRing or an earlier GetStrongestLink), at any depth, over strong evidence only (payout account, private device, phone/email, address, same claimant). Stronger evidence costs less.",
+			Properties: map[string]any{"claim_id": id, "other_claim_id": map[string]any{"type": "string", "description": "A claim id revealed earlier in this run."}},
+			Required:   []string{"claim_id", "other_claim_id"}},
 		{Name: ToolRecordDisposition, Description: "Save the human investigator's decision. Only succeeds when the investigator supplied this exact decision for this run; you cannot choose a disposition yourself. Do not call this unless the task message says the investigator supplied a decision.",
 			Properties: map[string]any{"claim_id": id,
 				"disposition": map[string]any{"type": "string", "enum": []string{disposition.ConfirmedFraud, disposition.NotSubstantiated, disposition.NeedsInfo}}},
@@ -185,8 +204,12 @@ func (tb *Toolbox) Execute(call ToolCall) (content string, isErr bool, abort err
 		out, err = tb.counterfactual(call.Input)
 	case ToolRecordDisposition:
 		out, err = tb.recordDisposition(call.Input)
+	case ToolGetClaimRing:
+		out, err = tb.claimRing(call.Input)
+	case ToolGetStrongestLink:
+		out, err = tb.strongestLink(call.Input)
 	default:
-		return finish("", violation(fmt.Sprintf("unknown tool %q: only the six listed tools exist", clip(call.Name, 40))))
+		return finish("", violation(fmt.Sprintf("unknown tool %q: only the listed tools exist", clip(call.Name, 40))))
 	}
 	if err != nil {
 		return finish("", err)
@@ -258,23 +281,42 @@ func (tb *Toolbox) findRelated(raw []byte) (any, error) {
 		ClaimID    string   `json:"claim_id"`
 		Hops       int      `json:"hops"`
 		FilingDate string   `json:"filing_date"`
-		Paths      []string `json:"paths"` // at most 3 per claim; use GetEvidencePaths for detail
+		Paths      []string `json:"paths"` // at most maxPathsToModel per claim; use GetEvidencePaths for detail
 	}
+	// Every related claim is in scope, but only the first maxRelatedToModel (closest, then
+	// strongest evidence) are listed: on a large book a claim can have 50 related claims,
+	// which would not fit in one tool result.
 	out := make([]related, 0, len(res.RelatedClaims))
 	for _, rc := range res.RelatedClaims {
 		tb.known[rc.ClaimID] = true
+		tb.noteEntities(rc)
+		if len(out) == maxRelatedToModel {
+			continue
+		}
 		r := related{ClaimID: rc.ClaimID, Hops: rc.Hops, FilingDate: rc.FilingDate}
 		for i, p := range rc.Paths {
-			if i == 3 {
+			if i == maxPathsToModel {
 				break
 			}
 			r.Paths = append(r.Paths, p.Description)
 		}
 		out = append(out, r)
-		tb.noteEntities(rc)
 	}
 	return map[string]any{"target_claim": res.TargetClaim, "max_hops": res.MaxHops, "related_claims": out,
-		"truncated": res.Truncated, "message": res.Message}, nil
+		"related_total": len(res.RelatedClaims), "related_shown": len(out),
+		"shared_infrastructure": infrastructureForModel(res.InfrastructureLinks),
+		"truncated":             res.Truncated, "message": res.Message}, nil
+}
+
+// infrastructureForModel summarizes busy shared identifiers (counted once as weak evidence;
+// their users are not connections).
+func infrastructureForModel(links []investigate.InfrastructureLink) []string {
+	out := []string{}
+	for _, l := range links {
+		out = append(out, fmt.Sprintf("%s %s (%s) is shared infrastructure used by %d other claims; weak evidence, not a connection",
+			l.EntityType, l.EntityID, l.Category, l.OtherClaims))
+	}
+	return out
 }
 
 type evidenceIn struct {
@@ -306,8 +348,17 @@ func (tb *Toolbox) evidencePaths(raw []byte) (any, error) {
 			Description string `json:"description"`
 			Steps       []step `json:"steps"`
 		}
-		paths := make([]path, 0, len(rc.Paths))
-		for _, p := range rc.Paths {
+		// The paths come from a dedicated FalkorDB query with both claims bound (not from
+		// the cached related-claims list), searched only as deep as FindRelatedClaims found.
+		found, err := investigate.EvidencePaths(tb.g, tb.target, rc.ClaimID, rc.Hops, tb.related.ExcludedCategory)
+		if err != nil {
+			return nil, reject("evidence lookup failed; use the paths already returned by FindRelatedClaims")
+		}
+		if len(found) == 0 {
+			return nil, reject("the graph returned no path between these claims")
+		}
+		paths := make([]path, 0, len(found))
+		for _, p := range found {
 			pp := path{Hops: p.Hops, Description: p.Description}
 			for _, s := range p.Steps {
 				pp.Steps = append(pp.Steps, step{Step: s, Category: investigate.SignalCategory(s)})
@@ -466,6 +517,99 @@ func (tb *Toolbox) recordDisposition(raw []byte) (any, error) {
 	}
 	tb.recorded = c
 	return map[string]any{"recorded": true, "case_id": c.CaseID, "claim_id": c.ClaimID, "disposition": c.Disposition}, nil
+}
+
+// ---- graph algorithm tools ----
+
+func (tb *Toolbox) claimRing(raw []byte) (any, error) {
+	var in claimIn
+	if err := decodeStrict(raw, &in); err != nil {
+		return nil, err
+	}
+	if in.ClaimID != tb.target {
+		return nil, violation("claim_id must be the target claim of this investigation")
+	}
+	ring, err := graphalgo.RingOf(tb.g, in.ClaimID)
+	if errors.Is(err, graphalgo.ErrOverlayMissing) || errors.Is(err, graphalgo.ErrTimeout) {
+		return nil, reject(err.Error()) // a known condition the caller should be told about
+	}
+	if err != nil {
+		return nil, err
+	}
+	type member struct {
+		ClaimID      string   `json:"claim_id"`
+		FilingDate   string   `json:"filing_date,omitempty"`
+		Dispositions []string `json:"recorded_dispositions,omitempty"`
+	}
+	members := make([]member, 0, len(ring.Members))
+	for _, m := range ring.Members {
+		tb.known[m.ClaimID] = true // ring members are in scope for GetClaim / GetStrongestLink
+		if len(members) < maxRingMembersToModel {
+			members = append(members, member{m.ClaimID, m.FilingDate, m.Dispositions})
+		}
+	}
+	entities := ring.SharedEntities
+	for _, e := range entities {
+		tb.entityIDs[e.ID] = true
+	}
+	if len(entities) > maxRingEntitiesToModel {
+		entities = entities[:maxRingEntitiesToModel]
+	}
+	backbone := make([]string, 0, len(ring.Backbone))
+	for _, l := range ring.Backbone {
+		if len(backbone) == maxBackboneToModel {
+			break
+		}
+		backbone = append(backbone, fmt.Sprintf("%s(%s) -[%s]- %s(%s)", l.From.Type, l.From.ID, l.Rel, l.To.Type, l.To.ID))
+	}
+	return map[string]any{
+		"algorithm": ring.Algorithm, "ring_id": ring.RingID, "target_claim": ring.TargetClaim, "size": ring.Size,
+		"oversized": ring.Oversized, "members": members, "members_shown": len(members),
+		"shared_entities": entities, "hub_entity": ring.HubEntity,
+		"first_filed": ring.FirstFiled, "last_filed": ring.LastFiled, "filing_span_days": ring.SpanDays,
+		"confirmed_fraud_cases_in_ring": ring.ConfirmedFraudCases, "other_recorded_cases_in_ring": ring.OtherRecordedCases,
+		"backbone_links": backbone, "message": ring.Message, "note": ring.Note,
+	}, nil
+}
+
+type linkIn struct {
+	ClaimID      string `json:"claim_id"`
+	OtherClaimID string `json:"other_claim_id"`
+}
+
+func (tb *Toolbox) strongestLink(raw []byte) (any, error) {
+	var in linkIn
+	if err := decodeStrict(raw, &in); err != nil {
+		return nil, err
+	}
+	if in.ClaimID != tb.target {
+		return nil, violation("claim_id must be the target claim of this investigation")
+	}
+	if in.OtherClaimID == tb.target || !tb.known[in.OtherClaimID] {
+		return nil, violation("other_claim_id must be a different claim revealed earlier in this run")
+	}
+	link, err := graphalgo.FindStrongestLink(tb.g, in.ClaimID, in.OtherClaimID)
+	if errors.Is(err, graphalgo.ErrOverlayMissing) || errors.Is(err, graphalgo.ErrTimeout) {
+		return nil, reject(err.Error())
+	}
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range link.Claims {
+		tb.known[c] = true
+	}
+	for _, l := range link.Links {
+		for _, n := range []graphalgo.GraphNode{l.From, l.To} {
+			if n.Type != "Claim" && n.Type != "Claimant" {
+				tb.entityIDs[n.ID] = true
+			}
+		}
+	}
+	return map[string]any{
+		"algorithm": link.Algorithm, "from_claim": link.FromClaim, "to_claim": link.ToClaim, "found": link.Found,
+		"total_evidence_cost": link.TotalCost, "claims_on_path": link.Claims, "evidence_used": link.Evidence,
+		"path": link.Description, "note": link.Note,
+	}, nil
 }
 
 // ---- helpers ----

@@ -527,12 +527,13 @@ func TestFallbackRecommendationsFollowStrongestEvidence(t *testing.T) {
 	}
 }
 
-func TestSpecsAreExactlyTheSixAllowlistedTools(t *testing.T) {
+func TestSpecsAreExactlyTheAllowlistedTools(t *testing.T) {
 	want := map[string]bool{ToolGetClaim: true, ToolFindRelatedClaims: true, ToolGetEvidencePaths: true,
-		ToolGetPriorCases: true, ToolRunCounterfactual: true, ToolRecordDisposition: true}
+		ToolGetPriorCases: true, ToolRunCounterfactual: true, ToolRecordDisposition: true,
+		ToolGetClaimRing: true, ToolGetStrongestLink: true}
 	specs := Specs()
-	if len(specs) != 6 {
-		t.Fatalf("want exactly 6 tools, got %d", len(specs))
+	if len(specs) != len(want) {
+		t.Fatalf("want exactly %d tools, got %d", len(want), len(specs))
 	}
 	for _, s := range specs {
 		if !want[s.Name] {
@@ -554,5 +555,52 @@ func TestPriorCasesAcceptsShownIdsOnly(t *testing.T) {
 	r := e.run(nil)
 	if len(r.Trace) < 2 || !r.Trace[0].OK || r.Trace[1].OK {
 		t.Fatalf("shown ids must be accepted and unseen ids rejected: %+v", r.Trace)
+	}
+}
+
+// The algorithm tools run on the target only, reveal ring members (which then become
+// valid GetClaim / GetStrongestLink targets), and reject claims never revealed.
+func TestGraphAlgorithmToolsAndScope(t *testing.T) {
+	e := newEnv(t, "claimgraph_test_agent_algo",
+		calls(
+			call("1", ToolGetStrongestLink, `{"claim_id":"NEW","other_claim_id":"FAR"}`), // not revealed yet: violation
+			call("2", ToolGetClaimRing, `{"claim_id":"OLD1"}`),                           // not the target: violation
+			call("3", ToolGetClaimRing, `{"claim_id":"NEW"}`),                            // reveals FAR (4 transitions away)
+			call("4", ToolGetClaim, `{"claim_id":"FAR"}`),                                // now in scope
+			call("5", ToolGetStrongestLink, `{"claim_id":"NEW","other_claim_id":"FAR"}`), // now in scope
+		), say("{}"))
+	// FAR joins NEW's ring through a chain of strong links: NEW -device- H2 -payout- H3 -address- FAR.
+	// It has not been revealed when the run starts.
+	for _, f := range []*ingest.FNOL{
+		fnol("H2", "2026-06-02", func(f *ingest.FNOL) { f.DeviceID, f.PayoutAccountID = "DEV-S", "PAY-H" }),
+		fnol("H3", "2026-06-03", func(f *ingest.FNOL) { f.PayoutAccountID, f.AddressID = "PAY-H", "ADDR-H" }),
+		fnol("FAR", "2026-06-04", func(f *ingest.FNOL) { f.AddressID = "ADDR-H" }),
+	} {
+		if _, err := ingest.Ingest(e.g, f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := e.run(nil)
+	ok := func(i int) bool { return i < len(r.Trace) && r.Trace[i].OK }
+	if ok(0) || ok(1) {
+		t.Fatalf("unrevealed claim and non-target ring must be rejected: %+v", r.Trace[:2])
+	}
+	if !ok(2) || !ok(3) || !ok(4) {
+		t.Fatalf("ring, then GetClaim and GetStrongestLink on a revealed ring member must succeed: %+v", r.Trace)
+	}
+	var ringOut, linkOut string
+	for _, res := range e.fp.received {
+		if strings.Contains(res.Content, `"ring_id"`) {
+			ringOut = res.Content
+		}
+		if strings.Contains(res.Content, `"claims_on_path"`) {
+			linkOut = res.Content
+		}
+	}
+	if !strings.Contains(ringOut, `"FAR"`) || !strings.Contains(ringOut, "algo.WCC") {
+		t.Fatalf("ring output should list FAR and name the algorithm: %s", clip(ringOut, 400))
+	}
+	if !strings.Contains(linkOut, `"found":true`) || !strings.Contains(linkOut, "FAR") {
+		t.Fatalf("strongest link output: %s", clip(linkOut, 400))
 	}
 }

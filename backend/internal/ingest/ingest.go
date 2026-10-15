@@ -165,6 +165,13 @@ func Ingest(g *falkordb.Graph, f *FNOL) (*Result, error) {
 		}
 	}
 
+	if err := refreshOverlayForClaim(g, f.ClaimID, f.ClaimantID); err != nil {
+		return nil, err
+	}
+	if err := bumpEvidenceVersion(g); err != nil {
+		return nil, err
+	}
+
 	return &Result{ClaimID: f.ClaimID, Created: !existed, PolicyChecks: checks, PolicyCheckStatus: status}, nil
 }
 

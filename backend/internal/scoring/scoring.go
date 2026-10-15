@@ -132,8 +132,10 @@ func Compute(res *investigate.Result, cases []PriorCase) *Report {
 	r := &Report{
 		TargetClaim: res.TargetClaim, ExcludedCategory: res.ExcludedCategory,
 		Investigation: res, Factors: []Factor{}, PriorCases: cases, Uncertainty: []string{},
-		Disclaimer: Disclaimer, ConnectedClaims: len(res.RelatedClaims),
+		Disclaimer: Disclaimer,
 	}
+	connected := connectedClaims(res)
+	r.ConnectedClaims = len(connected)
 	if r.PriorCases == nil {
 		r.PriorCases = []PriorCase{}
 	}
@@ -162,6 +164,22 @@ func Compute(res *investigate.Result, cases []PriorCase) *Report {
 		}
 	}
 
+	// Shared infrastructure (a weak/context identifier used by more than
+	// investigate.InfrastructureMinClaims claims) is evidence about the target itself: its
+	// category counts once, like any direct signal, but its many users are not connected
+	// claims, so it adds nothing to breadth, timing or the confirmed-fraud check.
+	for _, l := range res.InfrastructureLinks {
+		o := seen[l.Category]
+		if o == nil {
+			o = &obs{map[string]bool{}, map[string]bool{}, map[string]bool{}}
+			seen[l.Category] = o
+		}
+		o.entities[l.EntityType+":"+l.EntityID] = true
+		if l.EvidenceID != "" {
+			o.evidence[l.EvidenceID] = true
+		}
+	}
+
 	total := 0
 	strong := 0
 	for _, d := range signalDefs {
@@ -180,16 +198,19 @@ func Compute(res *investigate.Result, cases []PriorCase) *Report {
 	}
 
 	// 2. Breadth: +5 per distinct connected claim, capped at +15.
-	if n := len(res.RelatedClaims); n > 0 {
+	if n := len(connected); n > 0 {
 		pts := n * PtsPerClaim
 		if pts > PtsClaimsCap {
 			pts = PtsClaimsCap
 		}
 		ids := make([]string, 0, n)
-		for _, rc := range res.RelatedClaims {
+		for _, rc := range connected {
 			ids = append(ids, rc.ClaimID)
 		}
 		sort.Strings(ids)
+		if len(ids) > maxFactorClaims {
+			ids = ids[:maxFactorClaims]
+		}
 		r.Factors = append(r.Factors, Factor{
 			Name: FClaimBreadth, Points: pts, Claims: ids,
 			Reason: fmt.Sprintf("%d distinct connected claim(s), %d pts each, capped at %d", n, PtsPerClaim, PtsClaimsCap),
@@ -200,7 +221,7 @@ func Compute(res *investigate.Result, cases []PriorCase) *Report {
 	// 3. Temporal proximity: any connected claim filed within 7 days of the target.
 	if target, ok := parseDate(res.TargetFilingDate); ok {
 		var near []string
-		for _, rc := range res.RelatedClaims {
+		for _, rc := range connected {
 			if d, ok := parseDate(rc.FilingDate); ok && absDays(target, d) <= TemporalDays {
 				near = append(near, rc.ClaimID)
 			}
@@ -235,14 +256,35 @@ func Compute(res *investigate.Result, cases []PriorCase) *Report {
 	}
 	r.Score = total
 	r.Band, r.BandMeaning = Band(total)
-	r.Uncertainty = uncertaintyNotes(seen, cases, len(res.RelatedClaims))
+	r.Uncertainty = uncertaintyNotes(seen, cases, len(connected)+len(res.InfrastructureLinks))
+	for _, l := range res.InfrastructureLinks {
+		r.Uncertainty = append(r.Uncertainty, fmt.Sprintf(
+			"%s %s is shared infrastructure used by %d other claims; it counts once as weak evidence and those claims are not treated as connections.",
+			l.EntityType, l.EntityID, l.OtherClaims))
+	}
 	return r
+}
+
+// maxFactorClaims bounds the claim ids listed on one factor (the count is in the reason).
+const maxFactorClaims = 50
+
+// connectedClaims is every connected claim. Results built by hand (tests) may only have
+// RelatedClaims.
+func connectedClaims(res *investigate.Result) []investigate.ConnectedClaim {
+	if res.Connected != nil || len(res.RelatedClaims) == 0 {
+		return res.Connected
+	}
+	out := make([]investigate.ConnectedClaim, len(res.RelatedClaims))
+	for i, rc := range res.RelatedClaims {
+		out[i] = investigate.ConnectedClaim{ClaimID: rc.ClaimID, Hops: rc.Hops, FilingDate: rc.FilingDate}
+	}
+	return out
 }
 
 func confirmedFraudFactor(res *investigate.Result, cases []PriorCase) *Factor {
 	target, tok := parseDate(res.TargetFilingDate)
 	filed := map[string]string{}
-	for _, rc := range res.RelatedClaims {
+	for _, rc := range connectedClaims(res) {
 		filed[rc.ClaimID] = rc.FilingDate
 	}
 	var claims, ids []string

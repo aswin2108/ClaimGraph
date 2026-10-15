@@ -32,6 +32,7 @@ import (
 	"claimgraph/internal/api"
 	"claimgraph/internal/config"
 	"claimgraph/internal/graph"
+	"claimgraph/internal/ingest"
 )
 
 func main() {
@@ -49,6 +50,14 @@ func main() {
 	}
 
 	g := db.SelectGraph(env("GRAPH_NAME", graph.DefaultGraphName))
+	// Bring the analytics overlay (labels + evidence costs used by the graph algorithms) up to
+	// date for data written before it existed. Idempotent; a failure only disables algorithms.
+	if err := ingest.EnsureIndexes(g); err != nil {
+		logger.Printf("lookup indexes not ensured: %v", err)
+	}
+	if err := ingest.EnsureOverlay(g); err != nil {
+		logger.Printf("analytics overlay not refreshed: %v", err)
+	}
 	apiServer := api.New(g, env("CORS_ORIGIN", "http://localhost:5173"), logger)
 	apiServer.SetAllowedHosts(strings.Split(env("API_ALLOWED_HOSTS", ""), ","))
 

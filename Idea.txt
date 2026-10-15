@@ -119,6 +119,10 @@ Score bands
 30–59: Review — additional examination may be warranted.
 60–100: High Priority — prioritize human investigation.
 A high score does not establish fraud. The interface must use investigation-oriented language throughout.
+Scale amendments (2026-10-15, after the 20,000-claim benchmark; every T01-T30 expectation is unchanged):
+- Shared infrastructure: a repair shop, public IP, vendor settlement account, public device or private IP used by more than 20 claims counts once as weak evidence for its category, with its exact user count, but its users are not treated as connected claims (no breadth, timing or confirmed-case points). Strong identifiers (payout, device, contact, address) are never treated this way.
+- The same claimant filing several claims with their own account or device is not shared-entity evidence (this already applied to contact and address).
+- Breadth, timing and prior outcomes are computed over every connected claim, not only the claims listed in the report.
 Feature 6: Counterfactual investigation — our signature feature
 The investigator can exclude one evidence category from the analysis and recompute the score.
 The first supported interaction will be:
@@ -445,4 +449,61 @@ If a task makes this flow more correct, more explainable, more reliable, or easi
 If a task does not directly support this flow or a required judging criterion, do not build it during the hackathon.
 The goal is not to build the largest application. The goal is to build the smallest complete application that convincingly proves this idea works.
 That is ClaimGraph.
+
+13. Suggestions to improve our chances in Track 1 (added 2026-10-15 after a review)
+Status at review: all 30 scenario tests, the Go suite and 22 frontend tests pass; the 7-panel dashboard, six-tool agent, deterministic fallback and counterfactuals are built. The suggestions below close the gap between "a correct build" and "a winning Track 1 entry". Docs, README, blog and demo video are deliberately deferred until this work is done.
+
+Why these suggestions (evidence)
+- Official rules: "If the product still works without FalkorDB, the graph is decoration and doesn't qualify." Judges look for the graph doing essential work. Today our multi-hop traversal is a Go loop over a one-hop query; a SQL join could imitate it on 8 claims. This is our biggest risk.
+- Official blog (How to build an agent that reasons over a graph): strong projects (a) use a graph the agent cannot do without, (b) show visible hops, (c) never let the model write Cypher, (d) return the path with every answer, (e) distinguish "not in the graph" from "no impact", (f) use built-in algorithms (shortest path, PageRank) as tools, (g) treat memory as more nodes. A persuasive demo runs the same question at shallow and deep depth and shows the distant connection appear.
+- Track 1 text names: multi-hop reasoning, graph queries AND ALGORITHMS as agent tools, tool selection through MCP, actions based on graph results, explainable results. We cover multi-hop and explainability; we do not yet cover algorithms or MCP.
+- Earlier FalkorDB events (no winner of THIS hackathon exists yet; these are the only precedents found):
+  * Memory Meets Motion (San Francisco, Aug 2026) - 1st place Atrium: wrong mental models as nodes, grouped by a two-hop Cypher traversal that "a flat table or vector search can't express". The graph was the clever idea, not decoration.
+  * Same event, standout "Hopper (Security Notification Triage)": walks advisory -> package -> dependency -> repo -> service -> customer -> contract clause in under 100 ms, and treats "path not found" as proof of safety. This is the closest analogue to our Track 1 entry; note the stated latency and the honest absence-of-path semantics.
+  * Standouts AgentCourt Precedent and Hopper (Distribution Network) store decisions/rulings as graph precedent for later cases (our dispositions already do this); DealBench made live runs fail loudly rather than fall back to canned output (we must never fake a graph result in the demo).
+  * Hack for Humanity (San Francisco, Sep 2026) - winner Henry Gardner "Can I park here?" (Best Use of Photon): about 22,500 curb nodes and 37,700 schedule entries, radius query plus join in one Cypher call, idempotent UNWIND...MERGE batches, graph name derived from a hash of the source data plus a ready flag. Scale numbers and loading discipline were part of the story.
+  * Same event, Board of SuperVision: 7,553-node graph, parameterized Cypher templates, read-only guarded text-to-Cypher (3 s timeout, write-keyword block, LIMIT cap), a full-text index, and a 30-of-30 eval set highlighted in the write-up. Our eval set is already stronger than most; we should present it as prominently.
+  * Caveat: those were one-day events and none published judging criteria. Graph Hacks runs three days and had 6,000+ registrations, so the bar is higher. Fraud investigation is the example in Track 1's own description, so expect other fraud entries; we must differentiate.
+- What we must keep as our edge (do NOT trade away): the 30-case eval harness, counterfactual investigation, deterministic fallback, "no fabricated evidence" validation, cost/security controls.
+
+P0 - Make FalkorDB visibly essential (highest impact)
+S1. Scale the graph. Add a seed/generator (e.g. cmd/seed -scale) that loads 20k-50k synthetic claims with realistic noise (busy repair shops, shared public IPs, shared households) and 5-10 planted fraud rings of varying depth. Use idempotent UNWIND ... MERGE batches (a few hundred rows each), a ready flag so the app never reads a half-loaded graph, and indexes on every lookup key (claim_id, account_id, device_id, ip, shop_id, value, address_id). Keep the small T01-T30 fixtures untouched.
+    Acceptance: investigation of a ringed claim at full scale returns the correct score and paths; p95 latency is measured and recorded.
+S2. Show the numbers in the UI and the write-up: "traversed N nodes / M edges in X ms" on the investigation report (Go times each query). Judges should see the graph working at depth, in milliseconds.
+S3. Replace the Go hop-loop with real graph traversal. Add a parameterized variable-length Cypher template (e.g. (a:Claim {claim_id:$id})-[*..6]-(b:Claim) over the allowed entity relationship types) and/or shortestPath / allShortestPaths for GetEvidencePaths, with hard limits (max depth, LIMIT, query timeout). Keep the existing loop temporarily as a cross-check: a test must assert both produce identical related-claim sets and path sets on all 30 fixtures, then retire the loop. The scores in Section 7 must not change.
+S4. Add one FalkorDB graph algorithm as an allowlisted agent/API tool. Recommended: weakly connected components (WCC) over claims linked through strong shared entities, to surface a whole fraud ring ("ring size 14, 3 shared devices, 2 payout accounts") and to rank rings for the queue. Optional second: PageRank/betweenness on shared entities to name the "hub" entity (the device or payout account that ties the ring together). It must NOT change the deterministic 0-100 score or any T01-T30 result; it adds context and prioritization only. This relaxes the "no advanced graph algorithms" exclusion in Section 6 for exactly this purpose; update CLAUDE.md section 3 item 8 to say so.
+S5. Build the "shallow vs deep" demo moment. Same claim: hops=1 shows a weak or unremarkable picture; hops=3 reveals the ring and the score/evidence change. The backend already supports ?hops=1..3; add a visible hop slider/toggle in the UI that re-renders the graph and evidence, and script it into the 90-second demo.
+S6. Make "not in the graph" a first-class outcome (T28 already proves no fabrication). Give every report an explicit outcome type: connected_with_paths | connected_via_memory | no_supporting_connection | unknown_claim. Show it in the UI as a deliberate state ("No supporting connection found in the graph - this is not proof of innocence"), echoing the Hopper "path not found" idea.
+
+P1 - Track 1 checklist items we still miss
+S7. Expose the six allowlisted tools through an MCP server (Go, stdio and/or streamable HTTP) wrapping the existing Toolbox so the SAME validation, scope and limit rules apply. Add a test that an MCP client cannot call anything outside the six tools and cannot run raw Cypher (extends T30). Benefit: judges can attach Claude Desktop/Cursor to our graph, and the track's "tool selection through MCP" focus is satisfied. Keep the in-process agent as the primary path; MCP is an additional transport, not a second agent.
+S8. Add a tool-trace view in the UI (the API already returns tool_trace): show which tool the agent called, with what validated inputs, how many rows came back, and how long it took. Judges should see the agent choosing tools from graph results, not just a final paragraph.
+S9. Show the "act" in "agents that act on connected data". The agent already recommends a next verification step and records a human-gated disposition. Add 2-3 concrete, graph-derived action types to the recommendation (e.g. request payout-account ownership verification, request device/IP logs for the linked claims, mark related open claims "hold for review" as a simulated queue state). All actions stay human-approved and simulated; nothing pays, denies or accuses. Each recommended action must cite the exact graph path that triggered it.
+S10. Prove the graph is essential with a measured comparison. Add a short benchmark (script + results table for the write-up): the same ring-discovery question answered (a) with FalkorDB traversal and (b) with an equivalent relational self-join approach at 3-hop depth on the scaled data (in-memory SQLite or Postgres is enough). Report latency and query complexity honestly, whichever way it comes out; the point is to answer the "decoration" rule with evidence.
+
+P2 - Strengthen precedent / memory (also improves the narrative; optional Track 2 angle)
+S11. Similar-case retrieval from graph structure: when a claim is investigated, retrieve past InvestigationCase nodes by shared entities AND by ring shape (same entity-type pattern), not only by direct entity overlap. Present as "precedent", never as automatic proof; the +15 rule for confirmed_fraud stays unchanged.
+S12. Per-tenant graphs: FalkorDB can host one isolated graph per tenant on one instance. Support a graph-name parameter (e.g. insurer A vs insurer B) with a tenant-scoped API/session, and show that investigations and memory do not leak across graphs. This is cheap in FalkorDB and is the one thing that would make a credible Track 2 entry; it conflicts with the out-of-scope item "multi-tenant architectures", so do it only AFTER P0 and P1, and update CLAUDE.md if adopted. If P0/P1 are not fully done, skip Track 2 and enter Track 1 only.
+S13. Persist a timeline of what the investigator and agent did on each claim (tool calls, counterfactuals run, dispositions) as nodes in the graph. Keep the agent itself stateless; this is an audit trail the investigator can read, not agent conversation memory.
+
+P3 - Reliability and polish that judges will actually feel
+S14. Run the real Gemini agent end-to-end at least once now and record the result: confirm the default model id (gemini-3.8-flash) is valid for the key, that function calling works, and that output validation does not reject good answers too often. Track the fallback rate. If the live model is flaky on judging day, the demo must still be impressive from the deterministic path alone.
+S15. Demo hardening: one command to reset to the known demo state; a guided "Demo scenario" button that loads the planted ring, runs hops=1 then hops=3, runs the repair-shop counterfactual, and records a disposition; no console errors; sensible empty/loading/error states; the graph stays legible at 500+ nodes (collapse low-signal entities, emphasize evidence paths, cap rendering).
+S16. Deployment readiness (code only for now; docs later): rate limiting on /agent, request size limits, a deploy-mode flag that disables dispositions or confines them to a scratch graph, and a way to use FalkorDB Cloud or a Docker host. The app has no authentication by design, so a public deployment must not expose unlimited LLM spend or destructive writes.
+S17. Git and process hygiene: commit in small meaningful steps from now on (the history is part of the originality check), and keep a short AI-assistance log of what AI helped with and what was verified by hand, because the rules require disclosure and may reject entries that cannot be explained.
+S18. Sync the project's own documents: CLAUDE.md still labels ingest/investigate/scoring/docs as "planned", does not record the new scope decisions (algorithms, MCP, scale, tenancy), and does not list TOWED_BY/TowProvider in Idea.txt Section 5. Update both so they agree before judging.
+
+Evidence for the final submission (collect while building, write up later)
+- Evaluation table: 30 of 30 scenarios pass, 10 of 10 suspicious cases alerted, 0 of 10 hard negatives High Priority (re-run after S3 and S4).
+- Scale table: node/edge counts, query latencies (median and p95) at depth 1, 2 and 3.
+- The FalkorDB-versus-relational comparison from S10.
+- Screenshots/recording of: hop slider reveal, counterfactual, tool trace, "no supporting connection" outcome, MCP client calling our tools.
+
+Suggested order of work (about three days)
+1. S1, S2, S3 (scale + real traversal + timing) - this is what changes how judges see FalkorDB.
+2. S5, S6, S8 (hop reveal, honest absence state, tool trace) - mostly UI on top of what exists.
+3. S4 (one algorithm) and S7 (MCP).
+4. S9, S10 (graph-derived actions, benchmark).
+5. S14, S15, S16 (live agent check, demo hardening, deploy safety), then S11-S13 only if time remains, with S17-S18 throughout.
+Rule for every suggestion above: it must keep T01-T30 passing, keep the LLM unable to write Cypher, and keep investigation-oriented language (never accusatory).
 

@@ -36,11 +36,12 @@ func analyze(g *falkordb.Graph, claimID string, maxHops int, exclude string) (*R
 
 // priorCases returns outcomes recorded on claims connected to the target.
 func priorCases(g *falkordb.Graph, res *investigate.Result) ([]PriorCase, error) {
-	if len(res.RelatedClaims) == 0 {
+	connected := connectedClaims(res)
+	if len(connected) == 0 {
 		return []PriorCase{}, nil
 	}
-	ids := make([]any, 0, len(res.RelatedClaims))
-	for _, rc := range res.RelatedClaims {
+	ids := make([]any, 0, len(connected))
+	for _, rc := range connected {
 		ids = append(ids, rc.ClaimID)
 	}
 	r, err := g.ROQuery(cypherPriorCases, map[string]any{"ids": ids}, nil)
