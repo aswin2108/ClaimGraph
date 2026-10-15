@@ -232,7 +232,15 @@ type Ring struct {
 }
 
 // RingOf returns the ring (strong-evidence connected component) that contains claimID.
-func RingOf(g *falkordb.Graph, claimID string) (*Ring, error) {
+func RingOf(g *falkordb.Graph, claimID string) (*Ring, error) { return ringOf(g, claimID, true) }
+
+// RingSummaryOf is RingOf without shared entities and backbone: membership, member facts
+// and the ring indicators only (used at intake and for recommended actions).
+func RingSummaryOf(g *falkordb.Graph, claimID string) (*Ring, error) {
+	return ringOf(g, claimID, false)
+}
+
+func ringOf(g *falkordb.Graph, claimID string, full bool) (*Ring, error) {
 	start := time.Now()
 	if !ingest.ValidID(claimID) {
 		return nil, fmt.Errorf("invalid claim id %q", claimID)
@@ -291,7 +299,7 @@ func RingOf(g *falkordb.Graph, claimID string) (*Ring, error) {
 	if err := ring.loadFacts(g, members); err != nil {
 		return nil, err
 	}
-	if !ring.Oversized {
+	if !ring.Oversized && full {
 		if err := ring.loadEntities(g, members); err != nil {
 			return nil, err
 		}

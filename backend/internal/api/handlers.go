@@ -1,6 +1,7 @@
 package api
 
 import (
+	"claimgraph/internal/actions"
 	"net/http"
 	"strconv"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"claimgraph/internal/agent"
 	"claimgraph/internal/claims"
 	"claimgraph/internal/disposition"
+	"claimgraph/internal/graphalgo"
 	"claimgraph/internal/ingest"
 	"claimgraph/internal/investigate"
 	"claimgraph/internal/scoring"
@@ -51,7 +53,16 @@ func (s *Server) handleSubmitFNOL(w http.ResponseWriter, r *http.Request) {
 	if res.Created {
 		status = http.StatusCreated
 	}
-	writeJSON(w, status, res)
+	// Intake ring alert: does the new claim join a ring? The FNOL is already stored; a failed
+	// ring lookup is logged and never fails the submission.
+	alert, err := graphalgo.AlertFor(s.g, res.ClaimID)
+	if err != nil {
+		s.logger.Printf("ring alert for %s: %v", res.ClaimID, err)
+	}
+	writeJSON(w, status, struct {
+		*ingest.Result
+		RingAlert *graphalgo.RingAlert `json:"ring_alert,omitempty"`
+	}{res, alert})
 }
 
 // GET /api/claims?limit=N — the claim queue.
@@ -100,7 +111,24 @@ func (s *Server) handleInvestigation(w http.ResponseWriter, r *http.Request) {
 	if s.handle(w, err) {
 		return
 	}
-	writeJSON(w, http.StatusOK, rep)
+	writeJSON(w, http.StatusOK, withActions(s, rep))
+}
+
+// investigationResponse is the report plus the recommended verification plan (the report's
+// fields stay at the top level, so existing clients are unaffected).
+type investigationResponse struct {
+	*scoring.Report
+	RecommendedActions *actions.Plan        `json:"recommended_actions"`
+	RingAlert          *graphalgo.RingAlert `json:"ring_alert,omitempty"`
+}
+
+func withActions(s *Server, rep *scoring.Report) investigationResponse {
+	ring, err := graphalgo.RingSummaryOf(s.g, rep.TargetClaim)
+	if err != nil {
+		s.logger.Printf("ring summary for %s: %v", rep.TargetClaim, err)
+		ring = nil
+	}
+	return investigationResponse{Report: rep, RecommendedActions: actions.Recommend(rep, ring), RingAlert: graphalgo.AlertFromRing(ring)}
 }
 
 type counterfactualRequest struct {

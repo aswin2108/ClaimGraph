@@ -327,3 +327,22 @@ func TestSameClaimantIsNotSharedEvidenceAtClaimLevel(t *testing.T) {
 		t.Fatalf("another claimant using the account is a real link: %+v", res.RelatedClaims)
 	}
 }
+
+// Outcome types make "nothing found" an explicit answer.
+func TestOutcomeTypes(t *testing.T) {
+	g := scratch(t, "claimgraph_test_investigate_outcome")
+	load(t, g, fx("T0", func(f *ingest.FNOL) { f.RepairShopID = "SHOP-BUSY" }))
+	for i := 0; i < InfrastructureMinClaims+1; i++ {
+		load(t, g, fx(fmt.Sprintf("U%02d", i), func(f *ingest.FNOL) { f.RepairShopID = "SHOP-BUSY" }))
+	}
+	load(t, g, fx("LONE", nil), fx("P1", func(f *ingest.FNOL) { f.PayoutAccountID = "PAY-P" }), fx("P2", func(f *ingest.FNOL) { f.PayoutAccountID = "PAY-P" }))
+	for claim, want := range map[string]string{"T0": OutcomeInfrastructureOnly, "LONE": OutcomeNoConnection, "P1": OutcomeConnected} {
+		res, err := FindRelatedClaims(g, claim, 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Outcome != want || (want != OutcomeConnected && res.Message == "") {
+			t.Errorf("%s: outcome %q message %q, want %q", claim, res.Outcome, res.Message, want)
+		}
+	}
+}

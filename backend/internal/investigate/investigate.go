@@ -87,10 +87,34 @@ type Result struct {
 	// breadth, timing and prior outcomes, so the list cap never changes a score.
 	Connected []ConnectedClaim `json:"-"`
 	Message   string           `json:"message,omitempty"`
-	Stats     *TraversalStats  `json:"traversal_stats,omitempty"` // how the answer was computed (S2)
+	// Outcome is an explicit result type, so "nothing found" is a stated answer, never an
+	// empty list to interpret: connected | infrastructure_only | no_supporting_connection.
+	Outcome string          `json:"outcome"`
+	Stats   *TraversalStats `json:"traversal_stats,omitempty"` // how the answer was computed (S2)
 	// Infrastructure the target uses (see InfrastructureMinClaims): reported with exact
 	// counts instead of one related claim per user. Nil when there is none.
 	InfrastructureLinks []InfrastructureLink `json:"infrastructure_links,omitempty"`
+}
+
+// Outcome types.
+const (
+	OutcomeConnected          = "connected"
+	OutcomeInfrastructureOnly = "infrastructure_only"
+	OutcomeNoConnection       = "no_supporting_connection"
+)
+
+const infrastructureOnlyMessage = "This claim is linked to others only through shared infrastructure (a busy repair shop, carrier IP, kiosk or vendor account); no claim is connected through evidence specific to it."
+
+// setOutcome states what the investigation found.
+func setOutcome(res *Result) {
+	switch {
+	case len(res.RelatedClaims) > 0:
+		res.Outcome = OutcomeConnected
+	case len(res.InfrastructureLinks) > 0:
+		res.Outcome, res.Message = OutcomeInfrastructureOnly, infrastructureOnlyMessage
+	default:
+		res.Outcome, res.Message = OutcomeNoConnection, noConnectionMessage
+	}
 }
 
 // ConnectedClaim is the minimal record of a connected claim used for scoring.
@@ -236,9 +260,7 @@ func FindRelatedClaimsExcluding(g *falkordb.Graph, claimID string, maxHops int, 
 		res.RelatedClaims = res.RelatedClaims[:MaxRelatedClaims] // listing only; scoring uses Connected
 	}
 	order(false)
-	if len(res.RelatedClaims) == 0 {
-		res.Message = noConnectionMessage
-	}
+	setOutcome(res)
 	return res, nil
 }
 

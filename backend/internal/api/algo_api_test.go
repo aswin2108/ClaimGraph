@@ -1,6 +1,9 @@
 package api
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestRingLinkAndRingListEndpoints(t *testing.T) {
 	e := newEnv(t, "claimgraph_test_api_algo")
@@ -42,5 +45,40 @@ func TestRingLinkAndRingListEndpoints(t *testing.T) {
 		if code, b, _ := e.do("GET", path, nil); code != want {
 			t.Errorf("%s: got %d %v, want %d", path, code, b, want)
 		}
+	}
+}
+
+func TestIntakeRingAlertActionsOutcomeAndStats(t *testing.T) {
+	e := newEnv(t, "claimgraph_test_api_intake")
+	for i := 0; i < 4; i++ {
+		e.submit(fnol(fmt.Sprintf("Q%d", i), fmt.Sprintf("2026-08-%02d", 1+i*5), map[string]any{
+			"payout_account_id": "PAY-MULE", "address_id": fmt.Sprintf("ADDR-%d", i), "policy_start": "2026-07-20"}))
+	}
+	// The new FNOL looks clean on its own; the response says it joins a ring.
+	code, b, _ := e.do("POST", "/api/fnol", fnol("Q9", "2026-08-25", map[string]any{
+		"payout_account_id": "PAY-MULE", "address_id": "ADDR-9", "policy_start": "2026-07-20"}))
+	alert, _ := b["ring_alert"].(map[string]any)
+	if code != 201 || b["policy_check_status"] != "passed" || alert == nil || alert["level"] != "review_recommended" || alert["size"] != float64(5) {
+		t.Fatalf("intake alert: %d %v", code, b)
+	}
+	if code, b, _ := e.do("POST", "/api/fnol", fnol("SOLO", "2026-08-25", nil)); code != 201 || b["ring_alert"] != nil {
+		t.Fatalf("an unconnected claim has no ring alert: %v", b)
+	}
+
+	code, inv, _ := e.do("GET", "/api/claims/Q9/investigation", nil)
+	plan, _ := inv["recommended_actions"].(map[string]any)
+	acts, _ := plan["actions"].([]any)
+	invest, _ := inv["investigation"].(map[string]any)
+	if code != 200 || len(acts) == 0 || inv["score"] == nil || invest["outcome"] != "connected" || inv["ring_alert"] == nil {
+		t.Fatalf("investigation response: %d %v", code, inv)
+	}
+	if _, solo, _ := e.do("GET", "/api/claims/SOLO/investigation", nil); solo["investigation"].(map[string]any)["outcome"] != "no_supporting_connection" {
+		t.Fatalf("unconnected outcome: %v", solo["investigation"])
+	}
+
+	code, st, _ := e.do("GET", "/api/graph/stats", nil)
+	labels, _ := st["labels"].(map[string]any)
+	if code != 200 || labels["Claim"] != float64(6) || st["analytics_overlay_ready"] != true || st["relationships"].(float64) == 0 {
+		t.Fatalf("graph stats: %d %v", code, st)
 	}
 }

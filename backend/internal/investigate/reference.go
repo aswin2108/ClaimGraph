@@ -158,9 +158,7 @@ func FindRelatedClaimsReference(g *falkordb.Graph, claimID string, maxHops int, 
 	if len(res.RelatedClaims) > MaxRelatedClaims {
 		res.RelatedClaims = res.RelatedClaims[:MaxRelatedClaims]
 	}
-	if len(res.RelatedClaims) == 0 {
-		res.Message = noConnectionMessage
-	}
+	setOutcome(res)
 	return res, nil
 }
 

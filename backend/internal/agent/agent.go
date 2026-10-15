@@ -9,7 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"claimgraph/internal/actions"
 	"claimgraph/internal/disposition"
+	"claimgraph/internal/graphalgo"
 	"claimgraph/internal/ingest"
 	"claimgraph/internal/scoring"
 
@@ -77,6 +79,9 @@ type Result struct {
 	Recorded       *disposition.Case       `json:"recorded_disposition,omitempty"`
 	Trace          []TraceEntry            `json:"tool_trace"`
 	Usage          Usage                   `json:"usage"`
+	// RecommendedActions is the deterministic verification plan derived from the graph
+	// evidence (internal/actions). The model is shown it and may only refine the next step.
+	RecommendedActions *actions.Plan `json:"recommended_actions"`
 }
 
 // Agent runs the bounded investigation agent.
@@ -126,6 +131,12 @@ func (a *Agent) Run(ctx context.Context, req Request) (*Result, error) {
 	rec := disposition.New(a.Graph)
 	tb := newToolbox(a.Graph, rec, a.Logger, req.ClaimID, req.Decision)
 	res := &Result{Report: rep, FollowUps: []CounterfactualSummary{}, Trace: []TraceEntry{}}
+	ring, err := graphalgo.RingSummaryOf(a.Graph, req.ClaimID)
+	if err != nil {
+		a.Logger.Printf("ring summary for %s: %v", req.ClaimID, err) // the plan is built without ring context
+		ring = nil
+	}
+	res.RecommendedActions = actions.Recommend(rep, ring)
 	fb := buildFallback(rep)
 
 	// 2. Try the LLM; any failure leaves the deterministic result in place.
@@ -173,7 +184,7 @@ func (a *Agent) runLLM(parent context.Context, tb *Toolbox, rep *scoring.Report,
 	ctx, cancel := context.WithTimeout(parent, RunTimeout)
 	defer cancel()
 
-	brief := briefFor(rep, req.Decision)
+	brief := briefFor(rep, req.Decision, res.RecommendedActions)
 	tb.absorb(brief)
 	tb.scores[rep.Score] = true
 
@@ -242,7 +253,7 @@ func (a *Agent) runLLM(parent context.Context, tb *Toolbox, rep *scoring.Report,
 // briefFor builds the opening user message: the authoritative deterministic analysis
 // plus the task. It contains no claimant names and no free-text notes: the investigator's
 // notes are attached by the system, never shown to the model.
-func briefFor(rep *scoring.Report, d *Decision) string {
+func briefFor(rep *scoring.Report, d *Decision, plan *actions.Plan) string {
 	type factor struct {
 		Name     string   `json:"name"`
 		Points   int      `json:"points"`
@@ -254,9 +265,16 @@ func briefFor(rep *scoring.Report, d *Decision) string {
 	for _, f := range rep.Factors {
 		fs = append(fs, factor{f.Name, f.Points, f.Reason, nonNil(f.Claims), nonNil(f.Entities)})
 	}
+	var verifications []string
+	if plan != nil {
+		for _, a := range plan.Actions {
+			verifications = append(verifications, a.Title)
+		}
+	}
 	analysis, _ := json.Marshal(map[string]any{
 		"target_claim": rep.TargetClaim, "investigation_priority_score": rep.Score, "band": rep.Band,
 		"connected_claims": rep.ConnectedClaims, "factors": fs, "prior_case_count": len(rep.PriorCases),
+		"household_explained": rep.HouseholdExplained, "recommended_verifications": nonNil(verifications),
 	})
 	var b strings.Builder
 	b.WriteString("Investigate target claim ")

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 
+	"claimgraph/internal/actions"
+	"claimgraph/internal/graphalgo"
 	"claimgraph/internal/ingest"
 	"claimgraph/internal/scoring"
 
@@ -23,6 +25,7 @@ import (
 type Session struct {
 	tb      *Toolbox
 	Report  *scoring.Report
+	Plan    *actions.Plan
 	aborted bool
 }
 
@@ -51,7 +54,12 @@ func NewSession(g *falkordb.Graph, lg *log.Logger, claimID string, hops int) (*S
 		lg = log.Default()
 	}
 	tb := newToolbox(g, nil, lg, claimID, nil)
-	s := &Session{tb: tb, Report: rep}
+	ring, err := graphalgo.RingSummaryOf(g, claimID)
+	if err != nil {
+		lg.Printf("ring summary for %s: %v", claimID, err)
+		ring = nil
+	}
+	s := &Session{tb: tb, Report: rep, Plan: actions.Recommend(rep, ring)}
 	tb.absorb(s.Opening())
 	tb.scores[rep.Score] = true
 	return s, nil
@@ -75,7 +83,8 @@ func (s *Session) Opening() string {
 	b, _ := json.Marshal(map[string]any{
 		"target_claim": rep.TargetClaim, "investigation_priority_score": rep.Score, "band": rep.Band,
 		"connected_claims": rep.ConnectedClaims, "factors": fs, "prior_case_count": len(rep.PriorCases),
-		"disclaimer": rep.Disclaimer,
+		"disclaimer": rep.Disclaimer, "household_explained": rep.HouseholdExplained,
+		"recommended_verifications": s.Plan.Actions,
 		"rules": []string{
 			"The score was computed deterministically from FalkorDB evidence; it is an investigation priority, not a probability of fraud. Do not recompute or change it.",
 			"Tools only accept the target claim and claims revealed in this investigation. Raw queries are not accepted.",

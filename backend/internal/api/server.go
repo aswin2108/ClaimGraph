@@ -84,6 +84,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/claims/{id}/ring", s.handleRing)
 	s.mux.HandleFunc("GET /api/claims/{id}/link/{other}", s.handleStrongestLink)
 	s.mux.HandleFunc("GET /api/rings", s.handleRings)
+	s.mux.HandleFunc("GET /api/graph/stats", s.handleGraphStats)
 }
 
 // ---- response helpers ----

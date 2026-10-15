@@ -45,6 +45,16 @@ func (s *Server) handleStrongestLink(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, link)
 }
 
+// GET /api/graph/stats — node/relationship counts (FalkorDB db.meta.stats), evidence
+// version and analytics-overlay readiness.
+func (s *Server) handleGraphStats(w http.ResponseWriter, r *http.Request) {
+	st, err := graphalgo.Stats(s.g)
+	if s.handle(w, err) {
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
 // GET /api/rings?min_size=3&limit=20 — rings across the whole book (algo.WCC), in review order.
 func (s *Server) handleRings(w http.ResponseWriter, r *http.Request) {
 	intParam := func(name string, lo, hi int) (int, bool) {
