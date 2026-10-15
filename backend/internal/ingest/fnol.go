@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -90,6 +91,20 @@ func (f *FNOL) Validate() error {
 		id(name, val)
 	}
 
+	for name, lim := range map[string]struct {
+		val string
+		max int
+	}{
+		"claimant_name":     {f.ClaimantName, 100},
+		"incident_location": {f.IncidentLocation, 200},
+		"loss_type":         {f.LossType, 50},
+		"contact_value":     {f.ContactValue, 200},
+	} {
+		if len([]rune(lim.val)) > lim.max {
+			p = append(p, fmt.Sprintf("%s must be at most %d characters", name, lim.max))
+		}
+	}
+
 	if f.VIN != "" && !vinPattern.MatchString(f.VIN) {
 		p = append(p, "vin must be 17 letters/digits")
 	}
@@ -137,6 +152,7 @@ func (f *FNOL) Validate() error {
 	}
 
 	if len(p) > 0 {
+		sort.Strings(p) // map iteration above is unordered; keep messages deterministic
 		return &ValidationError{Problems: p}
 	}
 	return nil
@@ -170,6 +186,9 @@ func PolicyCheckStatus(checks []PolicyCheck) string {
 	}
 	return "passed"
 }
+
+// ValidID reports whether s is a safe synthetic identifier (same rule used for FNOL IDs).
+func ValidID(s string) bool { return idPattern.MatchString(s) }
 
 // IPIsPublic reports whether ip is a publicly routable address.
 func IPIsPublic(ip string) bool {

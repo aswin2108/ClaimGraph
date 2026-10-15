@@ -46,7 +46,6 @@ pnpm-debug.log*
 docker-compose.override.yml
 falkordb-data/
 redis-data/
-data/
 *.rdb
 *.aof
 *.sqlite

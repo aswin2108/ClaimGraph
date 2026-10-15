@@ -37,6 +37,19 @@ const (
 		MERGE (c)-[:REPAIRED_AT {source:$src, evidence_id:$evid, recorded_at:$filed}]->(s)
 		MERGE (c)-[:PAID_TO {source:$src, evidence_id:$evid, recorded_at:$filed}]->(pd)`
 
+	// A claim has exactly one policy, claimant, vehicle, shop and payout, and at most one
+	// tow provider, device and IP. When a corrected FNOL is resubmitted, edges to any other
+	// target are removed so stale evidence cannot linger. $keep is "" when the field is
+	// absent (which matches nothing, so the old edge is removed). Entity nodes are kept.
+	cypherStaleCOVERED  = `MATCH (:Claim {claim_id:$claim_id})-[r:COVERED_BY]->(x:Policy) WHERE x.policy_id <> $keep DELETE r`
+	cypherStaleFILEDBY  = `MATCH (:Claim {claim_id:$claim_id})-[r:FILED_BY]->(x:Claimant) WHERE x.claimant_id <> $keep DELETE r`
+	cypherStaleINVOLVES = `MATCH (:Claim {claim_id:$claim_id})-[r:INVOLVES]->(x:Vehicle) WHERE x.vin <> $keep DELETE r`
+	cypherStaleREPAIRED = `MATCH (:Claim {claim_id:$claim_id})-[r:REPAIRED_AT]->(x:RepairShop) WHERE x.shop_id <> $keep DELETE r`
+	cypherStalePAIDTO   = `MATCH (:Claim {claim_id:$claim_id})-[r:PAID_TO]->(x:PayoutDestination) WHERE x.account_id <> $keep DELETE r`
+	cypherStaleTOWED    = `MATCH (:Claim {claim_id:$claim_id})-[r:TOWED_BY]->(x:TowProvider) WHERE x.tow_id <> $keep DELETE r`
+	cypherStaleDEVICE   = `MATCH (:Claim {claim_id:$claim_id})-[r:USED_DEVICE]->(x:Device) WHERE x.device_id <> $keep DELETE r`
+	cypherStaleIP       = `MATCH (:Claim {claim_id:$claim_id})-[r:FILED_FROM]->(x:IPAddress) WHERE x.ip <> $keep DELETE r`
+
 	cypherTow = `
 		MATCH (c:Claim {claim_id:$claim_id})
 		MERGE (t:TowProvider {tow_id:$tow_id})
@@ -100,6 +113,18 @@ func Ingest(g *falkordb.Graph, f *FNOL) (*Result, error) {
 			return fmt.Errorf("ingest %s: %w", f.ClaimID, err)
 		}
 		return nil
+	}
+
+	if existed {
+		for _, s := range []struct{ q, keep string }{
+			{cypherStaleCOVERED, f.PolicyID}, {cypherStaleFILEDBY, f.ClaimantID}, {cypherStaleINVOLVES, f.VIN},
+			{cypherStaleREPAIRED, f.RepairShopID}, {cypherStalePAIDTO, f.PayoutAccountID},
+			{cypherStaleTOWED, f.TowProviderID}, {cypherStaleDEVICE, f.DeviceID}, {cypherStaleIP, f.IPAddress},
+		} {
+			if err := run(s.q, map[string]any{"claim_id": f.ClaimID, "keep": s.keep}); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	if err := run(cypherCore, with(map[string]any{
