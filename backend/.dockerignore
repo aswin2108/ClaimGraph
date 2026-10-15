@@ -1,0 +1,8 @@
+# Never let secrets or local artefacts into a build context or image layer.
+.env
+.env.*
+Secrets/
+secrets/
+**/*.exe
+**/*.test
+.git

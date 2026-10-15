@@ -29,6 +29,9 @@ const (
 	sourceTag   = "investigator_simulated"
 )
 
+// ErrInvalid marks a rejected input (bad claim id, disposition or notes).
+var ErrInvalid = errors.New("invalid input")
+
 // ErrClaimNotFound is returned when the claim being closed out does not exist.
 var ErrClaimNotFound = investigate.ErrClaimNotFound
 
@@ -82,10 +85,10 @@ func CaseID(claimID string) string { return "CASE-" + claimID }
 // uses a hardcoded parameterized query, and never modifies the claim or its evidence.
 func (r *Recorder) Record(claimID, disp, notes string) (*Case, error) {
 	if !ingest.ValidID(claimID) {
-		return nil, fmt.Errorf("invalid claim_id %q", claimID)
+		return nil, fmt.Errorf("%w: invalid claim_id %q", ErrInvalid, claimID)
 	}
 	if !ValidDisposition(disp) {
-		return nil, fmt.Errorf("disposition must be one of %s, %s, %s", ConfirmedFraud, NotSubstantiated, NeedsInfo)
+		return nil, fmt.Errorf("%w: disposition must be one of %s, %s, %s", ErrInvalid, ConfirmedFraud, NotSubstantiated, NeedsInfo)
 	}
 	notes, err := cleanNotes(notes)
 	if err != nil {
@@ -142,7 +145,7 @@ func cleanNotes(s string) (string, error) {
 		return r
 	}, s)
 	if len([]rune(s)) > MaxNotesLen {
-		return "", errors.New("notes must be at most 500 characters")
+		return "", fmt.Errorf("%w: notes must be at most 500 characters", ErrInvalid)
 	}
 	return s, nil
 }

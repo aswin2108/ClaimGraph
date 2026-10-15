@@ -111,7 +111,8 @@ func Run(g *falkordb.Graph) (int, error) {
 		if err := exec(`
 			MERGE (c:Claim {claim_id:$id})
 			  SET c.incident_date=$incident, c.filing_date=$filed, c.amount=$amount, c.status='open',
-			      c.loss_type='collision', c.incident_location='Synthetic City'
+			      c.loss_type='collision', c.incident_location='Synthetic City',
+			      c.policy_check_status='passed' // active policy, incident inside coverage, amount under the limit
 			MERGE (pol:Policy {policy_id:$policy})
 			  SET pol.start_date='2026-01-01', pol.end_date='2026-12-31', pol.status='active'
 			WITH c, pol

@@ -1,0 +1,105 @@
+# ClaimGraph — clean-start local stack.
+#
+#   docker compose up --build            # FalkorDB + API + web UI + one-shot demo seed
+#   open http://localhost:5173           # the app
+#   open http://localhost:3000           # FalkorDB Browser (developer tool: raw graph + Cypher console)
+#   docker compose --profile test run --rm eval   # the whole Go test suite incl. the T01-T30 evaluation
+#   docker compose down                  # stop (data kept)    |  docker compose down -v   # stop and wipe the graph
+#
+# Everything is published on 127.0.0.1 only: there is no authentication, so never expose these ports.
+# Ports can be changed in a .env file next to this one (see .env.example).
+#
+# LLM key: optional. If Secrets/.env defines API_Gemini the agent can call Gemini; otherwise (or with
+# AGENT_ENABLED=false) every explanation is the deterministic one. The key is passed as an environment
+# variable to the api container only; it is never baked into an image.
+
+name: claimgraph
+
+services:
+  falkordb:
+    # Pinned to the exact image this project was developed and tested against.
+    image: falkordb/falkordb@sha256:107455e862a824e45e8e9f5a7fbfdf5e00a08b14e13eae2577c72fd9e3f59ba6
+    ports:
+      - "127.0.0.1:${FALKORDB_PORT:-6379}:6379"
+      - "127.0.0.1:${FALKORDB_BROWSER_PORT:-3000}:3000"
+    volumes:
+      - falkordb-data:/var/lib/falkordb/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./backend
+      target: runtime
+    depends_on:
+      falkordb:
+        condition: service_healthy
+    environment:
+      FALKORDB_ADDR: falkordb:6379
+      API_ADDR: 0.0.0.0:8080 # inside the container network only; the host port below is loopback-bound
+      API_ALLOWED_HOSTS: api # the Host name the web proxy sends (localhost names are always allowed)
+      CORS_ORIGIN: http://localhost:${WEB_PORT:-5173}
+      AGENT_ENABLED: ${AGENT_ENABLED:-true}
+      AGENT_MODEL: ${AGENT_MODEL:-}
+      AGENT_MAX_RUNS_PER_HOUR: ${AGENT_MAX_RUNS_PER_HOUR:-30}
+      AGENT_DAILY_TOKEN_BUDGET: ${AGENT_DAILY_TOKEN_BUDGET:-1000000}
+    env_file:
+      - path: ./Secrets/.env
+        required: false
+    ports:
+      - "127.0.0.1:${API_PORT:-8080}:8080"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    restart: unless-stopped
+
+  # One-shot: loads the synthetic demo claims (idempotent MERGE, safe to re-run).
+  seed:
+    build:
+      context: ./backend
+      target: runtime
+    command: ["seed"]
+    depends_on:
+      falkordb:
+        condition: service_healthy
+    environment:
+      FALKORDB_ADDR: falkordb:6379
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: "no"
+
+  web:
+    build:
+      context: ./frontend
+      target: runtime
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${WEB_PORT:-5173}:8080"
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
+  # Not started by default: docker compose --profile test run --rm eval
+  eval:
+    profiles: [test]
+    build:
+      context: ./backend
+      target: test
+    depends_on:
+      falkordb:
+        condition: service_healthy
+    environment:
+      FALKORDB_ADDR: falkordb:6379
+
+volumes:
+  falkordb-data:
