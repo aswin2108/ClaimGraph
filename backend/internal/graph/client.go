@@ -13,6 +13,11 @@ import (
 // DefaultGraphName is the graph that holds all ClaimGraph data.
 const DefaultGraphName = "claimgraph"
 
+// AppGraphName is the graph the API, MCP server and agent CLI use by default: the
+// 20,000-claim synthetic book loaded by cmd/seedscale. DefaultGraphName is the small curated
+// graph loaded by cmd/seed (CLI tools, quick checks).
+const AppGraphName = "claimgraph_scale"
+
 // Connect opens a FalkorDB connection (FALKORDB_ADDR, default localhost:6379)
 // and verifies it with a PING.
 func Connect() (*falkordb.FalkorDB, error) {

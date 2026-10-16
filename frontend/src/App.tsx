@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "./api";
-import type { AgentResult, ClaimDetail, ClaimSummary, Counterfactual, GraphView, Meta, Report, Ring } from "./types";
+import type { AgentResult, ClaimDetail, ClaimSummary, Counterfactual, GraphStats, GraphView, Meta, Report, Ring } from "./types";
+import { presetsFor } from "./presets";
 import { CATEGORY_LABEL, DISPOSITION_LABEL, money } from "./ui";
 import QueuePanel from "./components/QueuePanel";
 import GraphPanel from "./components/GraphPanel";
@@ -40,6 +41,11 @@ export default function App() {
   const [ringErr, setRingErr] = useState<string | null>(null);
   const [ringBusy, setRingBusy] = useState(false);
   const [ringsVersion, setRingsVersion] = useState(0); // new claims or outcomes can change the book-wide ring list
+  const [graphSize, setGraphSize] = useState<GraphStats | null>(null);
+  const [resetArmed, setResetArmed] = useState(false);
+  const [resetBusy, setResetBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [intakeKey, setIntakeKey] = useState(0);
 
   const [dispBusy, setDispBusy] = useState(false);
   const [dispMsg, setDispMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -57,8 +63,13 @@ export default function App() {
     }
   }, []);
 
+  const refreshGraphSize = useCallback(() => {
+    api.graphStats().then(setGraphSize).catch(() => setGraphSize(null)); // context only; never blocks the app
+  }, []);
+
   useEffect(() => {
     api.meta().then(setMeta).catch((e) => setError(msg(e)));
+    refreshGraphSize();
     api
       .claims()
       .then((c) => {
@@ -119,12 +130,49 @@ export default function App() {
   // Selecting a claim starts a fresh investigation.
   useEffect(() => {
     if (!selected) return;
-    setExcluded(null);
-    setFocus(null);
-    load(selected, hops, null, true);
-    loadRing(selected, true);
+    investigate(selected);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected]);
+
+  // Start a fresh investigation of a claim (also used when the selection does not change, e.g. after a reset).
+  const investigate = (id: string) => {
+    setExcluded(null);
+    setFocus(null);
+    load(id, hops, null, true);
+    loadRing(id, true);
+  };
+
+  // "Reset demo": restore the graph's pristine snapshot. Two clicks, because it discards every claim
+  // submitted and every outcome recorded since the demo was loaded (for every visitor of this server).
+  const resetDemo = async () => {
+    if (!resetArmed) {
+      setResetArmed(true);
+      window.setTimeout(() => setResetArmed(false), 5000);
+      return;
+    }
+    setResetArmed(false);
+    setResetBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const r = await api.resetDemo();
+      setNotice(`Demo reset: the graph is back to its starting state (${r.claims.toLocaleString("en-US")} claims, restored in ${r.duration_ms} ms).`);
+      setView("traversal");
+      setRingsVersion((v) => v + 1);
+      setIntakeKey((k) => k + 1);
+      refreshGraphSize();
+      api.meta().then(setMeta).catch(() => undefined);
+      const c = await api.claims();
+      setQueue(c);
+      const first = c[0]?.claim_id ?? null;
+      if (first && first === selectedRef.current) investigate(first);
+      else setSelected(first);
+    } catch (e) {
+      setError(msg(e));
+    } finally {
+      setResetBusy(false);
+    }
+  };
 
   const changeHops = (h: number) => {
     setHops(h);
@@ -211,6 +259,16 @@ export default function App() {
               <span className={`chip ${detail.policy_check_status === "passed" ? "chip-ok" : ""}`}>Policy checks {detail.policy_check_status}</span>
             </div>
           )}
+          {meta?.demo_reset_available && (
+            <button
+              className={`btn btn-small ${resetArmed ? "btn-danger" : "btn-ghost"}`}
+              onClick={resetDemo}
+              disabled={resetBusy}
+              title="Restores the graph to its starting state: removes every claim submitted and every outcome recorded since the demo was loaded."
+            >
+              {resetBusy ? "Resetting…" : resetArmed ? "Click again to reset" : "Reset demo"}
+            </button>
+          )}
           <span className="chip">Synthetic data</span>
         </div>
       </header>
@@ -218,6 +276,11 @@ export default function App() {
       {error && (
         <div className="banner" role="alert">
           {error}
+        </div>
+      )}
+      {notice && (
+        <div className="banner ok" role="status">
+          {notice}
         </div>
       )}
 
@@ -232,8 +295,12 @@ export default function App() {
             setSelected(id);
             setView("ring");
           }}
+          presets={presetsFor(meta?.graph)}
+          intakeKey={intakeKey}
           onSubmitted={async (id) => {
             setRingsVersion((v) => v + 1);
+            refreshGraphSize();
+            setNotice(null);
             await refreshQueue();
             setSelected(id);
           }}
@@ -255,7 +322,7 @@ export default function App() {
               onView={setView}
             />
           )}
-          <EvidencePanel report={shown} focusClaim={focus} onFocus={setFocus} />
+          <EvidencePanel report={shown} focusClaim={focus} onFocus={setFocus} graphSize={graphSize} />
         </div>
 
         <div className="right">

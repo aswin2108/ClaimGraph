@@ -4,6 +4,8 @@ export interface Meta {
   max_hops: number;
   disclaimer: string;
   llm_enabled: boolean;
+  graph?: string; // the FalkorDB graph the API serves
+  demo_reset_available?: boolean;
   agent_budget: { llm_runs_last_hour: number; max_llm_runs_per_hour: number; llm_tokens_today: number; daily_token_limit: number };
 }
 
@@ -363,5 +365,21 @@ export interface RingList {
   rings: RingSummary[];
   ordering: string;
   note: string;
+  duration_ms: number;
+}
+
+export interface GraphStats {
+  nodes: number;
+  relationships: number;
+  labels: Record<string, number>;
+  relationship_types: Record<string, number>;
+  evidence_version: number;
+  analytics_overlay_ready: boolean;
+  duration_ms: number;
+}
+export interface DemoResetResult {
+  graph: string;
+  restored_from: string;
+  claims: number;
   duration_ms: number;
 }

@@ -12,7 +12,8 @@
 //	AGENT_MAX_RUNS_PER_HOUR   LLM runs per hour       (default 30)
 //	AGENT_DAILY_TOKEN_BUDGET  LLM tokens per UTC day  (default 1000000)
 //	API_ALLOWED_HOSTS  extra Host names to accept, comma separated (localhost is always accepted)
-//	GRAPH_NAME      FalkorDB graph to use     (default claimgraph; the e2e tests use a scratch graph)
+//	GRAPH_NAME      FalkorDB graph to use     (default claimgraph_scale, the 20,000-claim book; e2e tests use a scratch graph)
+//	DEMO_RESET      "false" disables POST /api/demo/reset (default enabled when the graph has a snapshot)
 //	API_Gemini      Gemini API key, normally read from Secrets/.env
 package main
 
@@ -49,7 +50,10 @@ func main() {
 		logger.Fatalf("FalkorDB: %v", err)
 	}
 
-	g := db.SelectGraph(env("GRAPH_NAME", graph.DefaultGraphName))
+	g := db.SelectGraph(env("GRAPH_NAME", graph.AppGraphName))
+	if r, err := g.ROQuery(`MATCH (c:Claim) RETURN count(c) AS n`, nil, nil); err != nil || !r.Next() || r.Record().Values()[0] == int64(0) {
+		logger.Printf("graph %q has no claims yet; load it with `go run ./cmd/seedscale` (or set GRAPH_NAME)", g.Id)
+	}
 	// Bring the analytics overlay (labels + evidence costs used by the graph algorithms) up to
 	// date for data written before it existed. Idempotent; a failure only disables algorithms.
 	if err := ingest.EnsureIndexes(g); err != nil {
@@ -60,6 +64,11 @@ func main() {
 	}
 	apiServer := api.New(g, env("CORS_ORIGIN", "http://localhost:5173"), logger)
 	apiServer.SetAllowedHosts(strings.Split(env("API_ALLOWED_HOSTS", ""), ","))
+	// "Reset demo" restores the graph's pristine snapshot (saved by cmd/seedscale). It discards
+	// every submitted claim and recorded outcome, so a deployment shared by strangers can turn it off.
+	if env("DEMO_RESET", "true") != "false" {
+		apiServer.EnableDemoReset(db)
+	}
 
 	// The LLM is optional: with AGENT_ENABLED=false or no key, agent runs return the
 	// deterministic explanation. Only variable names are ever logged, never values.

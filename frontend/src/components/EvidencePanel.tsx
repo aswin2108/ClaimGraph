@@ -1,10 +1,11 @@
-import type { Path, Report, Step } from "../types";
+import type { GraphStats, Path, Report, Step } from "../types";
 import { CATEGORY_COLOR, CATEGORY_LABEL, DISPOSITION_LABEL, ENTITY_LABEL } from "../ui";
 
 interface Props {
   report: Report | null;
   focusClaim: string | null;
   onFocus: (claimId: string | null) => void;
+  graphSize?: GraphStats | null; // the whole graph the traversal ran on (db.meta.stats)
 }
 
 const catOf = (s: Step): string => {
@@ -62,7 +63,7 @@ const OUTCOME: Record<string, { title: string; body: string }> = {
   },
 };
 
-export default function EvidencePanel({ report, focusClaim, onFocus }: Props) {
+export default function EvidencePanel({ report, focusClaim, onFocus, graphSize }: Props) {
   const inv = report?.investigation;
   const stats = inv?.traversal_stats;
   const total = inv?.connected_total ?? inv?.related_claims.length ?? 0;
@@ -79,7 +80,11 @@ export default function EvidencePanel({ report, focusClaim, onFocus }: Props) {
       </header>
       {stats && (
         <p className="stats-line" title="Wall clock measured in Go around the FalkorDB queries; it varies between runs and is never part of the score">
-          <span className="dot dot-ok" /> Traversal ran inside FalkorDB · {stats.queries} quer{stats.queries === 1 ? "y" : "ies"} · {stats.paths_returned} path
+          <span className="dot dot-ok" /> Traversal ran inside FalkorDB
+          {graphSize && graphSize.nodes > 0
+            ? ` on a graph of ${graphSize.nodes.toLocaleString("en-US")} nodes / ${graphSize.relationships.toLocaleString("en-US")} relationships`
+            : ""}{" "}
+          · {stats.queries} quer{stats.queries === 1 ? "y" : "ies"} · {stats.paths_returned} path
           {stats.paths_returned === 1 ? "" : "s"} examined · {stats.duration_ms} ms
         </p>
       )}

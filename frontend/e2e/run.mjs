@@ -63,6 +63,9 @@ function fnol(id, filed, mods = {}) {
   };
 }
 
+const falkorContainer = () =>
+  spawnSync("docker", ["ps", "-q", "--filter", "ancestor=falkordb/falkordb"]).stdout.toString().trim().split("\n")[0];
+
 function cleanup() {
   for (const p of procs) {
     try {
@@ -70,8 +73,8 @@ function cleanup() {
       else p.kill("SIGKILL");
     } catch {}
   }
-  // drop the scratch graph
-  spawnSync("docker", ["exec", spawnSync("docker", ["ps", "-q", "--filter", "ancestor=falkordb/falkordb"]).stdout.toString().trim().split("\n")[0], "redis-cli", "GRAPH.DELETE", GRAPH]);
+  // drop the scratch graph and its demo snapshot
+  for (const g of [GRAPH, `${GRAPH}__pristine`]) spawnSync("docker", ["exec", falkorContainer(), "redis-cli", "GRAPH.DELETE", g]);
 }
 
 async function main() {
@@ -94,6 +97,9 @@ async function main() {
   await api("POST", "/api/fnol", fnol("CLM-E04", "2026-03-01", { repair_shop_id: "SHOP-01" }));
   await api("POST", "/api/fnol", fnol("CLM-E05", "2026-02-01"));
   const T = "CLM-E03"; // newest filing date, so first in the queue
+  // The demo snapshot that "Reset demo" restores (cmd/seedscale saves one for the real demo graph).
+  const snap = spawnSync("docker", ["exec", falkorContainer(), "redis-cli", "GRAPH.COPY", GRAPH, `${GRAPH}__pristine`], { encoding: "utf8" });
+  if (!snap.stdout.includes("OK")) throw new Error("could not save the demo snapshot: " + snap.stdout + snap.stderr);
   const baseline = await api("GET", `/api/claims/${T}/investigation?hops=3`);
 
   // --- browser --------------------------------------------------------------------------------
@@ -326,6 +332,25 @@ async function main() {
   check("an isolated claim scores 0", (await score()) === 0);
   check("an isolated claim states the explicit 'no supporting connection' outcome", (await text(".outcome")).includes("No supporting connection found in the graph"));
   check("an isolated claim shows no ring alert", !(await page.$(".ring-alert")));
+
+  console.log("\nReset demo (restores the snapshot taken right after seeding)");
+  check("the API offers a reset for this graph", (await api("GET", "/api/meta")).demo_reset_available === true);
+  m = mark();
+  await click("Reset demo");
+  await sleep(300);
+  check("the first click only arms the reset", posts(since(m), "/api/demo/reset").length === 0);
+  await click("Click again to reset");
+  await waitFor(() => document.querySelector(".banner.ok")?.textContent.includes("Demo reset"), "reset done", 15000);
+  await sleep(1000);
+  check("exactly one reset POST", posts(since(m), "/api/demo/reset").length === 1);
+  const afterReset = await api("GET", "/api/claims?limit=100");
+  check("every claim submitted during the run is gone", eq(afterReset.claims.map((c) => c.claim_id).sort(), ["CLM-E01", "CLM-E02", "CLM-E03", "CLM-E04", "CLM-E05"]), afterReset.claims.map((c) => c.claim_id).join(","));
+  check("every outcome recorded during the run is gone", afterReset.claims.every((c) => !c.disposition));
+  check("the queue shows the restored claims", (await page.$$eval('[aria-label="Claim queue"] .q-item', (e) => e.length)) === 5);
+  const restored = await api("GET", `/api/claims/${T}/investigation?hops=3`);
+  check("the score is back to its starting value (no +15 from the outcome recorded earlier)", restored.score === baseline.score, `now=${restored.score} start=${baseline.score}`);
+  check("the UI shows the restored score", (await score()) === baseline.score);
+  check("a reset never calls the agent", posts(since(m), "/agent").length === 0);
 
   console.log("\nPage health");
   check("no console errors or uncaught exceptions", problems.length === 0, problems.join(" | "));

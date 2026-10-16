@@ -6,7 +6,7 @@
 //	go run ./cmd/agent CLM-1001 -json
 //
 // The LLM needs the Gemini key (API_Gemini in Secrets/.env); AGENT_MODEL overrides the model.
-// GRAPH_NAME selects the graph (default claimgraph).
+// GRAPH_NAME selects the graph (default claimgraph_scale, the 20,000-claim book).
 package main
 
 import (
@@ -58,9 +58,9 @@ func main() {
 		}
 		provider = p
 	}
-	name := os.Getenv("GRAPH_NAME") // e.g. claimgraph_scale; default: the curated demo graph
+	name := os.Getenv("GRAPH_NAME") // e.g. claimgraph for the small curated graph
 	if name == "" {
-		name = graph.DefaultGraphName
+		name = graph.AppGraphName
 	}
 	a := agent.New(db.SelectGraph(name), provider, log.New(os.Stderr, "agent ", log.LstdFlags))
 

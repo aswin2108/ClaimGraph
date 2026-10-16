@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api";
-import type { ClaimSummary, RingAlert, RingList, RingSummary } from "../types";
+import type { ClaimSummary, RingList, RingSummary } from "../types";
 import { DISPOSITION_LABEL, money, RING_INDICATOR_LABEL, RING_INDICATOR_SHORT } from "../ui";
-import { newClaimId, PRESETS } from "../presets";
+import type { Preset } from "../presets";
+import IntakeCard from "./IntakeCard";
 
 interface Props {
   claims: ClaimSummary[];
@@ -12,6 +13,8 @@ interface Props {
   ringsVersion: number; // bumped when new evidence or outcomes may change the ring list
   activeRingId?: string; // ring of the selected claim
   onOpenRing: (claimId: string) => void;
+  presets: Preset[]; // FNOL scenarios for the graph the API serves
+  intakeKey: number; // changes after a demo reset, so the intake card starts over
 }
 
 function traitDetail(ind: string, r: RingSummary): string {
@@ -112,66 +115,12 @@ function RingQueue({ version, activeRingId, onOpen }: { version: number; activeR
   );
 }
 
-export default function QueuePanel({ claims, selected, onSelect, onSubmitted, ringsVersion, activeRingId, onOpenRing }: Props) {
+export default function QueuePanel({ claims, selected, onSelect, onSubmitted, ringsVersion, activeRingId, onOpenRing, presets, intakeKey }: Props) {
   const [tab, setTab] = useState<"claims" | "rings">("claims");
   const [ringsOpened, setRingsOpened] = useState(false); // the ring list stays loaded once opened
-  const [preset, setPreset] = useState(PRESETS[0].key);
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const [alert, setAlert] = useState<RingAlert | null>(null); // the ring the submitted claim joins (algo.WCC at intake)
-  const current = PRESETS.find((p) => p.key === preset) ?? PRESETS[0];
-
-  const submit = async () => {
-    setBusy(true);
-    setMsg(null);
-    setAlert(null);
-    try {
-      const fnol = current.build(newClaimId());
-      const res = await api.submitFNOL(fnol);
-      const failed = res.policy_checks.filter((c) => !c.passed).map((c) => c.name.replaceAll("_", " "));
-      setMsg({
-        ok: true,
-        text: `${res.created ? "Received" : "Updated"} ${res.claim_id}. ` +
-          (failed.length ? `Ordinary policy checks flagged: ${failed.join(", ")}.` : "Ordinary policy checks passed."),
-      });
-      setAlert(res.ring_alert ?? null);
-      onSubmitted(res.claim_id);
-    } catch (e) {
-      const err = e as ApiError;
-      setMsg({ ok: false, text: err.problems?.length ? err.problems.join("; ") : err.message });
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <div className="side">
-      <section className="card">
-        <header className="card-head">
-          <h2>New claim (FNOL)</h2>
-        </header>
-        <div className="presets">
-          {PRESETS.map((p) => (
-            <button key={p.key} className={`preset ${p.key === preset ? "on" : ""}`} onClick={() => setPreset(p.key)}>
-              {p.title}
-            </button>
-          ))}
-        </div>
-        <p className="muted small">{current.blurb}</p>
-        <button className="btn btn-primary wide" onClick={submit} disabled={busy}>
-          {busy ? "Submitting…" : "Submit synthetic FNOL"}
-        </button>
-        {msg && <p className={`note ${msg.ok ? "ok" : "bad"}`}>{msg.text}</p>}
-        {alert && (
-          <div className={`ring-alert ${alert.level === "review_recommended" ? "review" : ""}`} role="status">
-            <strong>{alert.level === "review_recommended" ? `Joins ${alert.ring_id} · review recommended` : `Part of ${alert.ring_id}`}</strong>
-            <p className="small">{alert.message}</p>
-            <button className="link" onClick={() => onOpenRing(alert.claim_id)}>
-              Open ring view ({alert.size} claims)
-            </button>
-          </div>
-        )}
-      </section>
+      <IntakeCard key={intakeKey} presets={presets} onSubmitted={onSubmitted} onOpenRing={onOpenRing} />
 
       <section className="card grow">
         <header className="card-head">

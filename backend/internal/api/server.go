@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"claimgraph/internal/agent"
@@ -37,6 +38,10 @@ type Server struct {
 	hosts      map[string]bool // Host header values accepted (DNS-rebinding defence)
 	logger     *log.Logger
 	mux        *http.ServeMux
+
+	demoDB    *falkordb.FalkorDB // set by EnableDemoReset; nil = POST /api/demo/reset is disabled
+	resetMu   sync.Mutex
+	lastReset time.Time
 }
 
 // New builds a Server over the given graph. corsOrigin is the frontend origin
@@ -61,6 +66,9 @@ func (s *Server) SetAllowedHosts(hosts []string) {
 	}
 }
 
+// EnableDemoReset turns on POST /api/demo/reset, which restores the graph's pristine snapshot.
+func (s *Server) EnableDemoReset(db *falkordb.FalkorDB) { s.demoDB = db }
+
 // SetAgent replaces the investigation agent (e.g. with one backed by an LLM provider).
 // Without it, agent runs return the deterministic explanation.
 func (s *Server) SetAgent(a *agent.Agent) { s.agent = a }
@@ -73,6 +81,7 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.handleHealth)
 	s.mux.HandleFunc("GET /api/meta", s.handleMeta)
+	s.mux.HandleFunc("POST /api/demo/reset", s.handleDemoReset)
 	s.mux.HandleFunc("POST /api/fnol", s.handleSubmitFNOL)
 	s.mux.HandleFunc("GET /api/claims", s.handleListClaims)
 	s.mux.HandleFunc("GET /api/claims/{id}", s.handleGetClaim)

@@ -254,13 +254,16 @@ describe("FNOL intake", () => {
     await ready(api);
     await userEvent.click(screen.getByRole("button", { name: "Submit synthetic FNOL" }));
 
-    const msg = await screen.findByText(/Ordinary policy checks flagged: amount within limit/);
-    expect(msg).toBeInTheDocument();
+    expect(await screen.findByText(/Ordinary policy checks flagged a problem/)).toBeInTheDocument();
+    // each check the backend ran is listed with its own result
+    const checks = within(screen.getByRole("list", { name: "Policy checks" }));
+    expect(checks.getByText(/Amount is within the policy payout limit/).closest("li")).toHaveClass("bad");
+    expect(checks.getByText(/Policy is active/).closest("li")).toHaveClass("ok");
     const posts = api.where("POST", "/api/fnol");
     expect(posts).toHaveLength(1);
     const f = posts[0].body;
     expect(f.vin).toHaveLength(17);
-    expect(f.claim_id).toMatch(/^CLM-\d{6}$/);
+    expect(f.claim_id).toMatch(/^CLM-9\d{6}$/); // 7 digits: never collides with a seeded claim
     expect(f.payout_account_id).toBe("PAY-01"); // the "looks clean" preset reuses a known account
     await waitFor(() => expect(screen.getByTestId("graph")).toHaveAttribute("data-target", f.claim_id));
     expect(api.count("POST", "/agent")).toBe(0);

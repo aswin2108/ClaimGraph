@@ -35,6 +35,8 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 		"disclaimer":                scoring.Disclaimer,
 		"llm_enabled":               s.agent.Provider != nil,
 		"agent_budget":              s.agent.Budget.Status(),
+		"graph":                     s.g.Id,
+		"demo_reset_available":      s.demoResetAvailable(),
 	})
 }
 

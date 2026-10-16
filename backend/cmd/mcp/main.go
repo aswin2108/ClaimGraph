@@ -10,10 +10,10 @@
 // Environment:
 //
 //	FALKORDB_ADDR   FalkorDB address          (default localhost:6379)
-//	GRAPH_NAME      FalkorDB graph to use     (default claimgraph)
+//	GRAPH_NAME      FalkorDB graph to use     (default claimgraph_scale, the 20,000-claim book)
 //
 // stdout carries the protocol; logs go to stderr. The server never writes to the graph.
-// Run the seed or the API once first so the graph and its analytics overlay exist.
+// Load the graph first (go run ./cmd/seedscale) so it and its analytics overlay exist.
 package main
 
 import (
@@ -38,7 +38,7 @@ func main() {
 	}
 	name := os.Getenv("GRAPH_NAME")
 	if name == "" {
-		name = graph.DefaultGraphName
+		name = graph.AppGraphName
 	}
 	g := db.SelectGraph(name)
 	if err := graphalgo.CheckOverlay(g); err != nil {

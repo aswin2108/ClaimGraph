@@ -1,6 +1,6 @@
 # ClaimGraph — clean-start local stack.
 #
-#   docker compose up --build            # FalkorDB + API + web UI + one-shot demo seed
+#   docker compose up --build            # FalkorDB + API + web UI + one-shot seed (20,000-claim book, ~15 s the first time)
 #   open http://localhost:5173           # the app
 #   open http://localhost:3000           # FalkorDB Browser (developer tool: raw graph + Cypher console)
 #   docker compose --profile test run --rm eval   # the whole Go test suite incl. the T01-T30 evaluation
@@ -38,8 +38,12 @@ services:
     depends_on:
       falkordb:
         condition: service_healthy
+      seed:
+        condition: service_completed_successfully
     environment:
       FALKORDB_ADDR: falkordb:6379
+      GRAPH_NAME: ${GRAPH_NAME:-claimgraph_scale} # the 20,000-claim book; "claimgraph" = the small curated graph
+      DEMO_RESET: ${DEMO_RESET:-true} # "Reset demo" restores the seeded snapshot; set false if strangers share the app
       API_ADDR: 0.0.0.0:8080 # inside the container network only; the host port below is loopback-bound
       API_ALLOWED_HOSTS: api # the Host name the web proxy sends (localhost names are always allowed)
       CORS_ORIGIN: http://localhost:${WEB_PORT:-5173}
@@ -58,12 +62,14 @@ services:
     mem_limit: 512m
     restart: unless-stopped
 
-  # One-shot: loads the synthetic demo claims (idempotent MERGE, safe to re-run).
+  # One-shot: loads the small curated graph (idempotent MERGE) and, only if it or its snapshot is
+  # missing, the 20,000-claim book plus its pristine snapshot. Restarts keep visitors' data; the
+  # UI's "Reset demo" (or `docker compose down -v`) goes back to the start.
   seed:
     build:
       context: ./backend
       target: runtime
-    command: ["seed"]
+    command: ["sh", "-c", "seed && seedscale -if-missing -out ''"]
     depends_on:
       falkordb:
         condition: service_healthy
