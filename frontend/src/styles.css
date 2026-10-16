@@ -486,6 +486,165 @@ p.center {
   color: var(--ink);
 }
 
+/* ---------- graph view tabs + ring ---------- */
+.tabs {
+  display: inline-flex;
+  background: #f1f5f9;
+  border-radius: 10px;
+  padding: 2px;
+}
+.tabs button {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+.tabs button.on {
+  background: #fff;
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(30, 27, 75, 0.12);
+}
+.ring-card .pad {
+  padding: 12px 18px 18px;
+}
+.ring-stats {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  padding: 4px 18px 8px;
+}
+.ring-stats div {
+  display: flex;
+  flex-direction: column;
+  background: #f8f9ff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 6px 10px;
+  min-width: 0;
+}
+.ring-stats b {
+  color: var(--ink);
+  font-size: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ring-stats span {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.ring-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0 18px 10px;
+}
+.graph-stage.ring-stage {
+  height: 440px;
+}
+.ring-link {
+  min-height: 24px;
+}
+.ring-hidden {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  font-size: 11.5px;
+  color: var(--muted);
+  pointer-events: none;
+}
+.ring-link-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ring-link-head strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+.node-chip.faint {
+  border-color: #cbd5e1;
+  color: #64748b;
+}
+.ring-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+  gap: 18px;
+}
+.ring-cols h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.ring-ents {
+  list-style: none;
+  padding: 0;
+  font-size: 12.5px;
+  max-height: 170px;
+  overflow-y: auto;
+}
+.ring-ents li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.ring-ents i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.ring-members {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 170px;
+  overflow-y: auto;
+}
+.member {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 10px;
+  padding: 4px 9px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  line-height: 1.2;
+}
+.member:hover:not(:disabled) {
+  border-color: #a5b4fc;
+}
+.member.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.member.target {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.member small {
+  font-size: 10.5px;
+  opacity: 0.75;
+}
+.member small.disp {
+  color: #b45309;
+  opacity: 1;
+}
+
 /* ---------- priority ---------- */
 .gauge {
   transition: opacity 0.2s;
@@ -827,8 +986,15 @@ textarea {
     position: static;
     max-height: none;
   }
-  .graph-stage {
+  .graph-stage,
+  .graph-stage.ring-stage {
     height: 400px;
+  }
+  .ring-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .ring-cols {
+    grid-template-columns: 1fr;
   }
 }
 @media (prefers-reduced-motion: reduce) {

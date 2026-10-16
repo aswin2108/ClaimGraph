@@ -65,3 +65,18 @@ export const money = (n: number) => n.toLocaleString("en-US", { style: "currency
 
 export const reducedMotion = () =>
   typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+
+/** Evidence category of a node type on a graph-algorithm result (the strong-evidence subgraph only). */
+export const ALGO_CATEGORY: Record<string, string> = {
+  PayoutDestination: "payout",
+  Device: "device",
+  ContactPoint: "contact",
+  Address: "address",
+};
+
+export const RING_INDICATOR_LABEL: Record<string, string> = {
+  spans_households: "Spans households",
+  filing_burst: "Filing burst",
+  new_policies: "New policies",
+  confirmed_case: "Confirmed case on a member",
+};

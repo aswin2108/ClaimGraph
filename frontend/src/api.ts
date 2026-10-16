@@ -9,6 +9,8 @@ import type {
   GraphView,
   Meta,
   Report,
+  Ring,
+  StrongestLink,
 } from "./types";
 
 export class ApiError extends Error {
@@ -59,5 +61,7 @@ export const api = {
   disposition: (id: string, disposition: string, notes: string) =>
     call<DispositionCase>(`/api/claims/${enc(id)}/disposition`, json("POST", { disposition, notes })),
   agent: (id: string, hops: number) => call<AgentResult>(`/api/claims/${enc(id)}/agent`, json("POST", { hops })),
+  ring: (id: string) => call<Ring>(`/api/claims/${enc(id)}/ring`),
+  link: (id: string, other: string) => call<StrongestLink>(`/api/claims/${enc(id)}/link/${enc(other)}`),
   submitFNOL: (f: FNOL) => call<FNOLResult>("/api/fnol", json("POST", f)),
 };

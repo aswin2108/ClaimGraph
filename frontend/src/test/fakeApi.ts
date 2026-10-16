@@ -1,6 +1,7 @@
 import { vi } from "vitest";
 import type {
-  AgentResult, ClaimDetail, ClaimSummary, Counterfactual, DispositionCase, Factor, FNOLResult, GraphView, Meta, Report,
+  AgentResult, AlgoLink, ClaimDetail, ClaimSummary, Counterfactual, DispositionCase, Factor, FNOLResult, GraphView, Meta, Report, Ring,
+  StrongestLink,
 } from "../types";
 
 /** One request that reached the (fake) network. */
@@ -92,6 +93,56 @@ export const fnolResult = (id: string, failed: string[] = []): FNOLResult => ({
   policy_checks: ["policy_active", "incident_within_coverage_period", "amount_within_limit"].map((name) => ({ name, passed: !failed.includes(name) })),
 });
 
+const algoLink = (fromType: string, from: string, rel: string, toType: string, to: string, cost: number): AlgoLink => ({
+  from: { type: fromType, id: from }, rel, to: { type: toType, id: to }, evidence_cost: cost,
+});
+
+/** CLM-1's ring: CLM-2 shares its payout account (1 hop); CLM-7 is reached only through CLM-2's device. */
+export const ring = (id: string): Ring => ({
+  ring_id: "RING-CLM-1", target_claim: id, algorithm: "algo.WCC + algo.MSF", size: 3, oversized: false,
+  members: [
+    { claim_id: "CLM-1", filing_date: "2026-09-09", amount: 4200 },
+    { claim_id: "CLM-2", filing_date: "2026-09-07", amount: 3900, recorded_dispositions: ["confirmed_fraud"] },
+    { claim_id: "CLM-7", filing_date: "2026-08-30", amount: 5100 },
+  ],
+  shared_entities: [
+    { entity_type: "PayoutDestination", entity_id: "PAY-01", entity_subtype: "claimant", member_claims: 3 },
+    { entity_type: "Device", entity_id: "DEV-9", member_claims: 2 },
+  ],
+  hub_entity: { entity_type: "PayoutDestination", entity_id: "PAY-01", entity_subtype: "claimant", member_claims: 3 },
+  first_filed: "2026-08-30", last_filed: "2026-09-09", filing_span_days: 10, total_amount: 13200,
+  confirmed_fraud_cases: 1, other_recorded_cases: 0,
+  backbone: [
+    algoLink("Claim", id, "PAID_TO", "PayoutDestination", "PAY-01", 4),
+    algoLink("Claim", "CLM-2", "PAID_TO", "PayoutDestination", "PAY-01", 4),
+    algoLink("Claim", "CLM-2", "USED_DEVICE", "Device", "DEV-9", 5),
+    algoLink("Claim", "CLM-7", "USED_DEVICE", "Device", "DEV-9", 5),
+  ],
+  backbone_cost: 18, truncated: false, note: "A ring is a group of claims connected through strong shared identifiers.",
+  algorithm_results_cached: true, duration_ms: 6,
+  traits: { claimants: 3, addresses: 3, max_claims_in_90_days: 3, claims_on_new_policies: 0, indicators: ["spans_households", "confirmed_case"] },
+});
+
+export const loneRing = (id: string): Ring => ({
+  ...ring(id), ring_id: undefined, size: 1, members: [{ claim_id: id, amount: 0 }], shared_entities: [], hub_entity: undefined,
+  backbone: [], backbone_cost: 0, filing_span_days: 0, total_amount: 0, confirmed_fraud_cases: 0,
+  message: "The claim shares no strong identifier with any other claim, so it belongs to no ring.",
+  traits: { claimants: 0, addresses: 0, max_claims_in_90_days: 0, claims_on_new_policies: 0, indicators: null as unknown as string[] },
+});
+
+export const strongestLink = (from: string, to: string): StrongestLink => ({
+  from_claim: from, to_claim: to, algorithm: "algo.SPpaths", found: true, total_evidence_cost: 18,
+  claims_on_path: [from, "CLM-2", to],
+  links: [
+    algoLink("Claim", from, "PAID_TO", "PayoutDestination", "PAY-01", 4),
+    algoLink("PayoutDestination", "PAY-01", "PAID_TO", "Claim", "CLM-2", 4),
+    algoLink("Claim", "CLM-2", "USED_DEVICE", "Device", "DEV-9", 5),
+    algoLink("Device", "DEV-9", "USED_DEVICE", "Claim", to, 5),
+  ],
+  evidence_used: ["PayoutDestination(PAY-01)", "Device(DEV-9)"],
+  description: `${from} - PayoutDestination(PAY-01) - CLM-2 - Device(DEV-9) - ${to}`, note: "", duration_ms: 4,
+});
+
 // ---------- the fake network ----------
 
 export function installFakeApi(overrides: Record<string, Handler> = {}) {
@@ -108,6 +159,8 @@ export function installFakeApi(overrides: Record<string, Handler> = {}) {
     "POST /api/claims/:id/disposition": (c, p) => dispositionCase(p.id, c.body.disposition),
     "POST /api/claims/:id/agent": (_c, p) => agentResult(p.id),
     "POST /api/fnol": (c) => fnolResult(c.body.claim_id),
+    "GET /api/claims/:id/ring": (_c, p) => ring(p.id),
+    "GET /api/claims/:id/link/:other": (_c, p) => strongestLink(p.id, p.other),
   };
   const handlers = { ...defaults, ...overrides };
 

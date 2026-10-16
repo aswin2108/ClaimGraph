@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "./api";
-import type { AgentResult, ClaimDetail, ClaimSummary, Counterfactual, GraphView, Meta, Report } from "./types";
+import type { AgentResult, ClaimDetail, ClaimSummary, Counterfactual, GraphView, Meta, Report, Ring } from "./types";
 import { CATEGORY_LABEL, DISPOSITION_LABEL, money } from "./ui";
 import QueuePanel from "./components/QueuePanel";
 import GraphPanel from "./components/GraphPanel";
@@ -9,6 +9,8 @@ import PriorityPanel from "./components/PriorityPanel";
 import CounterfactualPanel from "./components/CounterfactualPanel";
 import NextStepPanel from "./components/NextStepPanel";
 import DispositionPanel from "./components/DispositionPanel";
+import RingPanel from "./components/RingPanel";
+import type { GraphViewMode } from "./components/ViewTabs";
 
 const msg = (e: unknown) => (e instanceof ApiError ? e.message : "Something went wrong.");
 
@@ -33,10 +35,16 @@ export default function App() {
   const [agentBusyFor, setAgentBusyFor] = useState<string | null>(null); // claim id of the in-flight agent run
   const [agentErr, setAgentErr] = useState<string | null>(null);
 
+  const [view, setView] = useState<GraphViewMode>("traversal");
+  const [ring, setRing] = useState<Ring | null>(null);
+  const [ringErr, setRingErr] = useState<string | null>(null);
+  const [ringBusy, setRingBusy] = useState(false);
+
   const [dispBusy, setDispBusy] = useState(false);
   const [dispMsg, setDispMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   const ticket = useRef(0); // ignore responses that belong to an older selection
+  const ringTicket = useRef(0);
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selected;
 
@@ -87,12 +95,33 @@ export default function App() {
     }
   }, []);
 
+  // The ring (algo.WCC + algo.MSF) depends only on the claim and the recorded evidence, not on hops or exclusions.
+  // It is fetched on its own so a failing algorithm never blocks the investigation.
+  const loadRing = useCallback(async (id: string, clear: boolean) => {
+    const mine = ++ringTicket.current;
+    if (clear) setRing(null);
+    setRingErr(null);
+    setRingBusy(true);
+    try {
+      const r = await api.ring(id);
+      if (mine === ringTicket.current) setRing(r);
+    } catch (e) {
+      if (mine === ringTicket.current) {
+        setRing(null);
+        setRingErr(msg(e));
+      }
+    } finally {
+      if (mine === ringTicket.current) setRingBusy(false);
+    }
+  }, []);
+
   // Selecting a claim starts a fresh investigation.
   useEffect(() => {
     if (!selected) return;
     setExcluded(null);
     setFocus(null);
     load(selected, hops, null, true);
+    loadRing(selected, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected]);
 
@@ -142,6 +171,7 @@ export default function App() {
         text: `${c.created ? "Recorded" : "Updated"}: ${DISPOSITION_LABEL[c.disposition]}. It will appear in future related investigations.`,
       });
       refreshQueue();
+      loadRing(selected, false); // the ring's recorded cases changed
       return true;
     } catch (e) {
       setDispMsg({ ok: false, text: msg(e) });
@@ -201,15 +231,21 @@ export default function App() {
         />
 
         <div className="center">
-          <GraphPanel
-            graph={graph}
-            hops={hops}
-            onHops={changeHops}
-            focusClaim={focus}
-            onFocus={setFocus}
-            excluded={excluded}
-            busy={loading}
-          />
+          {view === "ring" ? (
+            <RingPanel ring={ring} error={ringErr} busy={ringBusy} traversal={report?.investigation ?? null} hops={hops} onView={setView} />
+          ) : (
+            <GraphPanel
+              graph={graph}
+              hops={hops}
+              onHops={changeHops}
+              focusClaim={focus}
+              onFocus={setFocus}
+              excluded={excluded}
+              busy={loading}
+              ringSize={ring?.size}
+              onView={setView}
+            />
+          )}
           <EvidencePanel report={shown} focusClaim={focus} onFocus={setFocus} />
         </div>
 

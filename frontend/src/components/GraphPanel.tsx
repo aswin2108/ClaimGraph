@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import cytoscape from "cytoscape";
 import type { GraphView } from "../types";
 import { CATEGORY_COLOR, CATEGORY_LABEL, ENTITY_LABEL, reducedMotion } from "../ui";
+import { GRAPH_STYLE as STYLE } from "./graphStyle";
+import ViewTabs, { type GraphViewMode } from "./ViewTabs";
 
 interface Props {
   graph: GraphView | null;
@@ -11,6 +13,8 @@ interface Props {
   onFocus: (claimId: string | null) => void;
   excluded: string | null;
   busy: boolean;
+  ringSize?: number;
+  onView: (v: GraphViewMode) => void;
 }
 
 interface Hover {
@@ -54,106 +58,8 @@ function computeStages(g: GraphView): { stage: Map<string, number>; max: number 
   return { stage, max };
 }
 
-const STYLE = [
-  {
-    selector: "node",
-    style: {
-      "font-family": "Inter, system-ui, sans-serif",
-      "transition-property": "opacity",
-      "transition-duration": 450,
-    },
-  },
-  {
-    selector: "node[kind = 'claim']",
-    style: {
-      shape: "round-rectangle",
-      width: 100,
-      height: 36,
-      "background-color": "#ffffff",
-      "border-width": 2,
-      "border-color": "#6366f1",
-      label: "data(label)",
-      color: "#312e81",
-      "font-size": 13,
-      "font-weight": 600,
-      "text-valign": "center",
-      "text-halign": "center",
-    },
-  },
-  {
-    selector: "node[?target]",
-    style: {
-      width: 124,
-      height: 46,
-      "background-color": "#4f46e5",
-      "border-color": "#312e81",
-      color: "#ffffff",
-      "font-size": 13,
-      "font-weight": 700,
-      "overlay-opacity": 0,
-    },
-  },
-  {
-    selector: "node[kind = 'claimant']",
-    style: {
-      shape: "ellipse",
-      width: 14,
-      height: 14,
-      "background-color": "#cbd5e1",
-      label: "data(label)",
-      "font-size": 8.5,
-      color: "#94a3b8",
-      "text-valign": "bottom",
-      "text-margin-y": 3,
-    },
-  },
-  {
-    selector: "node[kind = 'entity']",
-    style: {
-      shape: "ellipse",
-      width: 34,
-      height: 34,
-      "background-color": "data(color)",
-      "border-width": 3,
-      "border-color": "#ffffff",
-      label: "data(display)",
-      "font-size": 11.5,
-      color: "#334155",
-      "text-wrap": "wrap",
-      "text-valign": "bottom",
-      "text-margin-y": 5,
-      "text-background-color": "#ffffff",
-      "text-background-opacity": 0.85,
-      "text-background-padding": "2px",
-      "text-background-shape": "roundrectangle",
-    },
-  },
-  {
-    selector: "node[?context]",
-    style: { "background-color": "#ffffff", "border-color": "#94a3b8", "border-width": 2, "border-style": "dashed" },
-  },
-  {
-    selector: "edge",
-    style: {
-      width: 2.2,
-      "curve-style": "bezier",
-      "line-color": "data(color)",
-      opacity: 0.8,
-      "transition-property": "opacity, width",
-      "transition-duration": 450,
-    },
-  },
-  { selector: "edge[rel = 'FILED_BY']", style: { width: 1.2, "line-style": "dotted", opacity: 0.55 } },
-  { selector: "edge[?context]", style: { "line-style": "dashed", opacity: 0.45 } },
-  { selector: ".hidden", style: { opacity: 0, events: "no" } },
-  { selector: ".fresh", style: { width: 4.5, "z-index": 9 } },
-  { selector: "node.fresh", style: { "border-width": 5 } },
-  { selector: ".dim", style: { opacity: 0.12 } },
-  { selector: ".onpath", style: { opacity: 1, "z-index": 10 } },
-  { selector: "edge.onpath", style: { width: 4 } },
-] as unknown as cytoscape.StylesheetJson;
 
-export default function GraphPanel({ graph, hops, onHops, focusClaim, onFocus, excluded, busy }: Props) {
+export default function GraphPanel({ graph, hops, onHops, focusClaim, onFocus, excluded, busy, ringSize, onView }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
   const timer = useRef<number | undefined>(undefined);
@@ -362,6 +268,7 @@ export default function GraphPanel({ graph, hops, onHops, focusClaim, onFocus, e
               ))}
             </select>
           </label>
+          <ViewTabs view="traversal" onView={onView} hops={hops} ringSize={ringSize} />
         </div>
       </header>
 

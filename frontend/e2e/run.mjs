@@ -193,6 +193,35 @@ async function main() {
   check("reset restores the full graph", eq((await cyInfo()).ids, graphApi.nodes.map((n) => n.id).sort()));
   check("disabled signal chips do nothing", (await btn("Phone / email")).asElement() === null);
 
+  console.log("\nClaim ring (algo.WCC + algo.MSF in FalkorDB; strongest link via algo.SPpaths)");
+  const ringApi = await api("GET", `/api/claims/${T}/ring`);
+  check("the API finds the seeded ring", ringApi.size === 3 && ringApi.backbone.length > 0, `size=${ringApi.size}`);
+  m = mark();
+  await click(`Ring · ${ringApi.size} claims`);
+  await waitFor(() => document.querySelector(".ring-stats") && window.__ringCy, "ring view");
+  await sleep(300);
+  check("opening the ring view sends no request (fetched once with the claim)", since(m).length === 0, JSON.stringify(since(m)));
+  const ringIds = await page.evaluate(() => window.__ringCy.nodes().map((n) => n.id()).sort());
+  const backboneIds = new Set(ringApi.backbone.flatMap((l) => [`${l.from.type}:${l.from.id}`, `${l.to.type}:${l.to.id}`]));
+  check("Cytoscape draws only algo.MSF backbone nodes", ringIds.length > 0 && ringIds.every((i) => backboneIds.has(i)), `ui=${ringIds}`);
+  check("every ring member claim is drawn", ringApi.members.every((x) => ringIds.includes(`Claim:${x.claim_id}`)), `ui=${ringIds}`);
+  check("every ring member is listed", (await page.$$eval(".member", (e) => e.length)) === ringApi.members.length);
+  const other = ringApi.members.map((x) => x.claim_id).find((c) => c !== T);
+  const linkApi = await api("GET", `/api/claims/${T}/link/${other}`);
+  m = mark();
+  await page.evaluate((o) => document.querySelector(`.member[aria-label^="${o},"]`).click(), other);
+  await waitFor(() => document.querySelector(".ring-link-head"), "strongest link");
+  await sleep(300);
+  const lr = since(m);
+  check("clicking a member sends exactly one strongest-link request", lr.length === 1 && lr[0].path === `/api/claims/${T}/link/${other}`, JSON.stringify(lr));
+  check("the strongest link shown matches the API", linkApi.found && (await text(".ring-link")).includes(`evidence cost ${linkApi.total_evidence_cost}`));
+  const lit = await page.evaluate(() => window.__ringCy.elements(".onpath").length);
+  check("the chain is highlighted on the graph", lit === linkApi.links.length * 2 + 1, `lit=${lit} links=${linkApi.links.length}`);
+  check("the ring view never calls the agent", posts(since(m), "/agent").length === 0);
+  await click("Traversal ≤ 3 hops");
+  await waitFor(() => document.querySelector(".select select") && window.__cy && !window.__cy.destroyed(), "back to traversal");
+  await sleep(500);
+
   console.log("\nAgent button (LLM disabled in this run: deterministic explanation, zero spend)");
   m = mark();
   await click("Run investigation agent");

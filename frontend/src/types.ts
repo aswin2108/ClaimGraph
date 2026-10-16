@@ -73,6 +73,7 @@ export interface Investigation {
   target_filing_date?: string;
   max_hops: number;
   related_claims: RelatedClaim[];
+  connected_total?: number; // every connected claim; related_claims lists at most 50
   truncated: boolean;
   message?: string;
 }
@@ -223,4 +224,73 @@ export interface FNOL {
   device_id?: string;
   device_is_public?: boolean;
   ip_address?: string;
+}
+
+// ---------- graph algorithms (context only; never part of the score) ----------
+
+export interface AlgoNode {
+  type: string; // domain label: Claim, Claimant, PayoutDestination, Device, ContactPoint, Address
+  id: string;
+}
+export interface AlgoLink {
+  from: AlgoNode;
+  rel: string;
+  to: AlgoNode;
+  evidence_cost: number;
+}
+export interface RingMember {
+  claim_id: string;
+  filing_date?: string;
+  amount: number;
+  recorded_dispositions?: string[];
+}
+export interface RingEntity {
+  entity_type: string;
+  entity_id: string;
+  entity_subtype?: string;
+  member_claims: number;
+}
+export interface RingTraits {
+  claimants: number;
+  addresses: number;
+  max_claims_in_90_days: number;
+  claims_on_new_policies: number;
+  indicators: string[];
+}
+export interface Ring {
+  ring_id?: string;
+  target_claim: string;
+  algorithm: string;
+  size: number;
+  oversized: boolean;
+  members: RingMember[];
+  shared_entities: RingEntity[];
+  hub_entity?: RingEntity;
+  first_filed?: string;
+  last_filed?: string;
+  filing_span_days: number;
+  total_amount: number;
+  confirmed_fraud_cases: number;
+  other_recorded_cases: number;
+  backbone: AlgoLink[];
+  backbone_cost: number;
+  truncated: boolean;
+  message?: string;
+  note: string;
+  algorithm_results_cached: boolean;
+  traits: RingTraits;
+  duration_ms: number;
+}
+export interface StrongestLink {
+  from_claim: string;
+  to_claim: string;
+  algorithm: string;
+  found: boolean;
+  total_evidence_cost?: number;
+  claims_on_path?: string[];
+  links: AlgoLink[] | null;
+  evidence_used?: string[];
+  description: string;
+  note: string;
+  duration_ms: number;
 }
