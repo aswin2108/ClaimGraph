@@ -1,7 +1,7 @@
 import type {
   AgentResult,
   ClaimDetail,
-  ClaimSummary,
+  ClaimPage,
   Counterfactual,
   DemoResetResult,
   DispositionCase,
@@ -52,9 +52,13 @@ const json = (method: string, data?: unknown): RequestInit => ({
 
 const enc = encodeURIComponent;
 
+export const QUEUE_PAGE = 100;
+
 export const api = {
   meta: () => call<Meta>("/api/meta"),
-  claims: () => call<{ claims: ClaimSummary[] }>("/api/claims?limit=100").then((r) => r.claims),
+  /** One page of the claim queue (newest first); q keeps claims whose id contains it. */
+  claims: (opts: { offset?: number; q?: string } = {}) =>
+    call<ClaimPage>(`/api/claims?limit=${QUEUE_PAGE}&offset=${opts.offset ?? 0}${opts.q ? `&q=${enc(opts.q)}` : ""}`),
   claim: (id: string) => call<ClaimDetail>(`/api/claims/${enc(id)}`),
   investigation: (id: string, hops: number) => call<Report>(`/api/claims/${enc(id)}/investigation?hops=${hops}`),
   graph: (id: string, hops: number, exclude?: string) =>

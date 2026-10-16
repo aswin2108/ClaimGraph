@@ -124,15 +124,20 @@ func TestEntityDetailsAndMultipleEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	rc := related(res)["T2"]
-	if len(rc.Paths) != 3 {
-		t.Fatalf("T2 should connect through payout, device and IP, got %d paths", len(rc.Paths))
+	if len(rc.Paths) != 2 {
+		t.Fatalf("T2 should connect through the device and the IP (not the vendor account), got %d paths", len(rc.Paths))
 	}
 	seen := map[string]Step{}
 	for _, p := range rc.Paths {
 		seen[p.Steps[0].EntityType] = p.Steps[0]
 	}
-	if s := seen["PayoutDestination"]; s.EntitySubtype != "vendor_direct_settlement" {
-		t.Errorf("payout type not reported: %+v", s)
+	if _, ok := seen["PayoutDestination"]; ok {
+		t.Errorf("a vendor settlement account is context only and must not connect claims: %+v", rc.Paths)
+	}
+	// It is still reported, with its subtype and exact user count, as context about T1.
+	if l := res.InfrastructureLinks; len(l) != 1 || l[0].EntityID != "PAY-V" || l[0].EntitySubtype != "vendor_direct_settlement" ||
+		l[0].Category != CatVendorPayout || l[0].OtherClaims != 1 {
+		t.Errorf("vendor account summary: %+v", l)
 	}
 	if s := seen["Device"]; s.EntityPublic == nil || *s.EntityPublic {
 		t.Errorf("device should be non-public: %+v", s)
@@ -182,5 +187,39 @@ func TestValidationAndNotFound(t *testing.T) {
 		if _, err := FindRelatedClaims(g, "Z1", h); err == nil {
 			t.Errorf("max_hops=%d must be rejected", h)
 		}
+	}
+}
+
+// Context-only identifiers (vendor settlement account, public device, private IP) never
+// connect claims, however few claims use them; strong and weak identifiers still do.
+func TestContextOnlyIdentifiersNeverConnectClaims(t *testing.T) {
+	g := scratch(t, "claimgraph_test_investigate_context")
+	vendor := func(f *ingest.FNOL) { f.PayoutAccountID, f.PayoutType = "PAY-VENDOR", "vendor_direct_settlement" }
+	load(t, g,
+		fx("C1", func(f *ingest.FNOL) { vendor(f); f.DeviceID, f.DevicePublic = "KIOSK", true; f.IPAddress = "10.1.2.3" }),
+		fx("C2", vendor),
+		fx("C3", func(f *ingest.FNOL) { f.DeviceID, f.DevicePublic = "KIOSK", true }),
+		fx("C4", func(f *ingest.FNOL) { f.IPAddress = "10.1.2.3"; f.AddressID = "ADDR-C" }),
+		fx("C5", func(f *ingest.FNOL) { f.AddressID = "ADDR-C" }), // two transitions away, but only via a private IP
+	)
+	for hops := 1; hops <= MaxHopsLimit; hops++ {
+		res, err := FindRelatedClaims(g, "C1", hops)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res.RelatedClaims) != 0 || res.Outcome != OutcomeInfrastructureOnly || len(res.InfrastructureLinks) != 3 {
+			t.Fatalf("hops=%d: want no related claims and three context identifiers, got %d related, outcome %s, %+v",
+				hops, len(res.RelatedClaims), res.Outcome, res.InfrastructureLinks)
+		}
+		for _, other := range []string{"C2", "C3", "C4", "C5"} {
+			if p, err := EvidencePaths(g, "C1", other, hops, ""); err != nil || len(p) != 0 {
+				t.Fatalf("hops=%d: EvidencePaths(C1, %s) must find nothing: %v %v", hops, other, p, err)
+			}
+		}
+	}
+	// C4 and C5 still connect through their shared address (strong evidence).
+	res, err := FindRelatedClaims(g, "C4", 1)
+	if err != nil || len(res.RelatedClaims) != 1 || res.RelatedClaims[0].ClaimID != "C5" {
+		t.Fatalf("a strong link must still connect claims: %+v %v", res, err)
 	}
 }

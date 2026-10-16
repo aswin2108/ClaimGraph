@@ -92,11 +92,12 @@ export const GRAPH_STYLE = [
   },
   { selector: "edge[rel = 'FILED_BY']", style: { width: 1.2, "line-style": "dotted", opacity: 0.55 } },
   { selector: "edge[?context]", style: { "line-style": "dashed", opacity: 0.45 } },
-  { selector: ".hidden", style: { opacity: 0, events: "no" } },
-  { selector: ".fresh", style: { width: 4.5, "z-index": 9 } },
+  { selector: "edge.fresh", style: { width: 4.5, "z-index": 9 } },
   { selector: "node.fresh", style: { "border-width": 5 } },
   { selector: ".dim", style: { opacity: 0.12 } },
   { selector: ".onpath", style: { opacity: 1, "z-index": 10 } },
   { selector: "edge.onpath", style: { width: 4 } },
   { selector: ".link-extra", style: { "line-style": "dashed" } },
+  // Last, so a not-yet-reached element stays invisible even while it is part of a highlighted path.
+  { selector: ".hidden", style: { opacity: 0, events: "no" } },
 ] as unknown as cytoscape.StylesheetJson;

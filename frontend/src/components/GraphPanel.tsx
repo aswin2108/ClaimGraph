@@ -59,44 +59,96 @@ function computeStages(g: GraphView): { stage: Map<string, number>; max: number 
 }
 
 
+// Growth animation: entities grow out at once, the claims they lead to follow once the entity has landed.
+const GROW_MS = 650;
+const GROW_DELAY_MS = 520;
+
+const HOP_HELP =
+  "A hop is one claim-to-claim link through something two claims share: a payout account, device, phone or email, address, repair shop or IP. " +
+  "1 hop = claims that share something with this claim directly. 2 hops = claims linked to those claims, and so on, up to 3. " +
+  "More hops reach further, but the score only counts each kind of evidence once.";
+
 export default function GraphPanel({ graph, hops, onHops, focusClaim, onFocus, excluded, busy, ringSize, onView }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
   const timer = useRef<number | undefined>(undefined);
+  const home = useRef(new Map<string, cytoscape.Position>()); // each node's laid-out position
+  const pending = useRef<number[]>([]); // delayed reveals of the current step
   const [stage, setStage] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [hover, setHover] = useState<Hover | null>(null);
 
   const stages = useMemo(() => (graph ? computeStages(graph) : { stage: new Map<string, number>(), max: 0 }), [graph]);
 
+  const clearPending = () => {
+    pending.current.forEach((t) => window.clearTimeout(t));
+    pending.current = [];
+  };
+
+  // Stops stepping through hops. The current step's growth finishes (the next reveal, or a new graph, clears it).
   const stop = useCallback(() => {
     window.clearInterval(timer.current);
     setPlaying(false);
   }, []);
 
-  // Show elements up to a traversal step. Newly revealed ones pulse briefly.
+  // Show elements up to a traversal step. With grow, each newly reached node grows out of the node it is
+  // linked from, so its edge stretches out behind it: entities grow from the claim reached in the previous
+  // hop, then the newly reached claims grow from those entities. Without grow (scrubbing, hop changes,
+  // reduced motion) everything jumps to its place.
   const reveal = useCallback(
-    (s: number, pulse: boolean) => {
+    (s: number, grow: boolean) => {
       const cy = cyRef.current;
       if (!cy) return;
+      clearPending();
+      cy.elements(".fresh").removeClass("fresh");
+      const stageOf = (id: string) => stages.stage.get(id) ?? 0;
+      const edgeStage = (e: cytoscape.EdgeSingular) => Math.max(stageOf(e.source().id()), stageOf(e.target().id()));
+      const starts: { node: cytoscape.NodeSingular; from?: cytoscape.Position; delay: number }[] = [];
       cy.batch(() => {
-        cy.elements().forEach((el) => {
-          const id = el.id();
-          const st = el.isEdge()
-            ? Math.max(stages.stage.get(el.source().id()) ?? 0, stages.stage.get(el.target().id()) ?? 0)
-            : (stages.stage.get(id) ?? 0);
-          const show = st <= s;
-          if (show && el.hasClass("hidden")) {
-            el.removeClass("hidden");
-            if (pulse) {
-              el.addClass("fresh");
-              window.setTimeout(() => el.removeClass("fresh"), 900);
+        cy.nodes().stop(true, true); // finish any running growth at its final position
+        cy.nodes().forEach((n) => {
+          const id = n.id();
+          const st = stageOf(id);
+          const to = home.current.get(id);
+          if (st > s) {
+            n.addClass("hidden");
+            if (to) n.position(to);
+          } else if (n.hasClass("hidden")) {
+            if (!grow) {
+              n.removeClass("hidden");
+              if (to) n.position(to);
+              return;
             }
-          } else if (!show) {
-            el.addClass("hidden");
+            // Grow from a node already on screen; a node linked only to other new nodes waits for them.
+            const around = n.neighborhood("node");
+            const older = around.filter((x) => stageOf(x.id()) < st);
+            const pool = older.nonempty() ? older : around.filter((x) => x.id() !== id);
+            const anchor = pool.nonempty() ? pool.min((x) => stageOf(x.id())).ele : undefined;
+            starts.push({ node: n, from: anchor ? home.current.get(anchor.id()) : undefined, delay: older.nonempty() ? 0 : GROW_DELAY_MS });
           }
         });
+        cy.edges().forEach((e) => {
+          if (edgeStage(e) > s) e.addClass("hidden");
+          else if (!grow) e.removeClass("hidden");
+        });
       });
+      for (const { node, from, delay } of starts) {
+        const start = () => {
+          const to = home.current.get(node.id());
+          node.position(from ?? to ?? node.position());
+          node.removeClass("hidden").addClass("fresh");
+          // its edges appear with it, once the node at the other end is on screen
+          node.connectedEdges().forEach((e) => {
+            const other = e.source().id() === node.id() ? e.target() : e.source();
+            if (edgeStage(e) <= s && !other.hasClass("hidden")) e.removeClass("hidden").addClass("fresh");
+          });
+          if (to) node.animate({ position: to }, { duration: GROW_MS, easing: "ease-out-cubic" });
+          pending.current.push(window.setTimeout(() => node.connectedEdges().union(node).removeClass("fresh"), GROW_MS + 300));
+          // (a cancelled removal is covered: every reveal starts by clearing the highlight)
+        };
+        if (delay === 0) start();
+        else pending.current.push(window.setTimeout(start, delay));
+      }
     },
     [stages],
   );
@@ -123,6 +175,7 @@ export default function GraphPanel({ graph, hops, onHops, focusClaim, onFocus, e
   // Build the Cytoscape instance whenever the evidence graph changes, then play the traversal once.
   useEffect(() => {
     stop();
+    clearPending();
     cyRef.current?.destroy();
     cyRef.current = null;
     if (!graph || !box.current) return;
@@ -173,6 +226,7 @@ export default function GraphPanel({ graph, hops, onHops, focusClaim, onFocus, e
       wheelSensitivity: 0.25,
     });
     cyRef.current = cy;
+    home.current = new Map(cy.nodes().map((n) => [n.id(), { ...n.position() }] as [string, cytoscape.Position]));
     if (import.meta.env.DEV) (window as unknown as { __cy?: cytoscape.Core }).__cy = cy; // handle for the browser e2e tests
 
     cy.on("mouseover", "edge", (ev) => {
@@ -195,6 +249,7 @@ export default function GraphPanel({ graph, hops, onHops, focusClaim, onFocus, e
     ro.observe(box.current);
     return () => {
       ro.disconnect();
+      clearPending(); // delayed reveals must never touch a destroyed graph
       cy.destroy();
       if (cyRef.current === cy) cyRef.current = null;
     };
@@ -258,6 +313,9 @@ export default function GraphPanel({ graph, hops, onHops, focusClaim, onFocus, e
         <h2>Evidence graph</h2>
         <div className="head-tools">
           {excluded && <span className="chip chip-warn">Ignoring {CATEGORY_LABEL[excluded] ?? excluded}</span>}
+          <span className="hint" tabIndex={0} aria-label={HOP_HELP}>
+            ?<span className="hint-pop" role="tooltip">{HOP_HELP}</span>
+          </span>
           <label className="select">
             <span>Max hops</span>
             <select value={hops} onChange={(e) => onHops(Number(e.target.value))}>
@@ -293,7 +351,8 @@ export default function GraphPanel({ graph, hops, onHops, focusClaim, onFocus, e
 
       <footer className="graph-foot">
         <div className="replay">
-          <button className="btn btn-ghost" onClick={() => (playing ? stop() : play(true))} disabled={!graph || stages.max === 0}>
+          {/* A replay shows the whole traversal, so it first clears a highlighted path. */}
+          <button className="btn btn-ghost" onClick={() => (playing ? stop() : (onFocus(null), play(true)))} disabled={!graph || stages.max === 0}>
             {playing ? "Pause" : "▶ Replay traversal"}
           </button>
           <input

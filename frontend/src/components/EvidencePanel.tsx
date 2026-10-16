@@ -59,7 +59,7 @@ const OUTCOME: Record<string, { title: string; body: string }> = {
   },
   infrastructure_only: {
     title: "Linked only through shared infrastructure",
-    body: "Every link runs through infrastructure that many unrelated claims use, so it is counted once as weak evidence and its users are not treated as connections.",
+    body: "Every link runs through infrastructure many unrelated claims use (a busy shop, a carrier IP) or a context-only identifier (a vendor settlement account, a kiosk, a company network). They are reported, but their users are not treated as connections.",
   },
 };
 
@@ -117,7 +117,7 @@ export default function EvidencePanel({ report, focusClaim, onFocus, graphSize }
 
       {!!inv?.infrastructure_links?.length && (
         <div className="block">
-          <h3>Shared infrastructure (counted once, not as connections)</h3>
+          <h3>Shared infrastructure and context (not treated as connections)</h3>
           <ul className="plain">
             {inv.infrastructure_links.map((l) => (
               <li key={`${l.entity_type}:${l.entity_id}`}>

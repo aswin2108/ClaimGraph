@@ -162,7 +162,11 @@ func ComputeWithPolicies(res *investigate.Result, cases []PriorCase, policyDays 
 	// claimant shares the target claimant's address (one of its direct paths is an address).
 	seen := map[string]*obs{}
 	coResident := map[string]bool{}
-	for _, rc := range res.RelatedClaims {
+	direct := res.RelatedClaims // complete unless the listing was capped
+	if res.Direct != nil {
+		direct = res.Direct // every direct connection, including those the 50-claim list left out
+	}
+	for _, rc := range direct {
 		if rc.Hops != 1 {
 			continue
 		}
@@ -172,7 +176,7 @@ func ComputeWithPolicies(res *investigate.Result, cases []PriorCase, policyDays 
 			}
 		}
 	}
-	for _, rc := range res.RelatedClaims {
+	for _, rc := range direct {
 		if rc.Hops != 1 {
 			continue
 		}
@@ -351,6 +355,12 @@ func ComputeWithPolicies(res *investigate.Result, cases []PriorCase, policyDays 
 			"Every shared payout account, device or phone is shared only with people at the claimant's own address, which a household or joint account explains; the multi-signal bonus was not applied.")
 	}
 	for _, l := range res.InfrastructureLinks {
+		if investigate.ContextOnly(l.Category) {
+			r.Uncertainty = append(r.Uncertainty, fmt.Sprintf(
+				"%s %s (%s) is also used by %d other claim(s); it is context only, earns no points and does not connect those claims.",
+				l.EntityType, l.EntityID, contextLabel[l.Category], l.OtherClaims))
+			continue
+		}
 		r.Uncertainty = append(r.Uncertainty, fmt.Sprintf(
 			"%s %s is shared infrastructure used by %d other claims; it counts once as weak evidence and those claims are not treated as connections.",
 			l.EntityType, l.EntityID, l.OtherClaims))
@@ -459,4 +469,10 @@ func keys(m map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+var contextLabel = map[string]string{
+	investigate.CatVendorPayout: "a repair vendor's settlement account",
+	investigate.CatPublicDevice: "a public device such as a kiosk",
+	investigate.CatPrivateIP:    "a private or company-network IP",
 }

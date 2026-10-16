@@ -65,7 +65,7 @@ func normalize(t *testing.T, r *Result) string {
 func TestTraversalMatchesReferenceOnRandomGraphs(t *testing.T) {
 	g := scratch(t, "claimgraph_test_investigate_random")
 	rng := rand.New(rand.NewSource(20261015))
-	const claimsN = 12
+	const claimsN = 18 // enough for multi-hop links now that vendor accounts and kiosk devices never connect claims
 	var ids []string
 	for i := 0; i < claimsN; i++ {
 		id := fmt.Sprintf("R%02d", i)

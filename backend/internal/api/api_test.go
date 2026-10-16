@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -357,5 +358,60 @@ func TestInternalErrorsAreNotLeaked(t *testing.T) {
 	_, b, _ := e.do("GET", "/api/claims/Z1/investigation?hops=abc", nil)
 	if s, _ := b["error"].(string); strings.Contains(strings.ToLower(s), "cypher") || strings.Contains(s, "falkor") {
 		t.Fatalf("error leaks internals: %q", s)
+	}
+}
+
+func TestClaimQueuePagingAndSearch(t *testing.T) {
+	e := newEnv(t, "claimgraph_test_api_queue_page")
+	e.submit(fnol("CLM-Q1", "2026-09-01", map[string]any{"vin": "VINQ1000000000000"}))
+	e.submit(fnol("CLM-Q2", "2026-09-02", map[string]any{"vin": "VINQ2000000000000"}))
+	e.submit(fnol("CLM-X3", "2026-09-03", map[string]any{"vin": "VINX3000000000000"}))
+
+	ids := func(b map[string]any) []string {
+		var out []string
+		for _, c := range b["claims"].([]any) {
+			out = append(out, c.(map[string]any)["claim_id"].(string))
+		}
+		return out
+	}
+	if code, b, _ := e.do("GET", "/api/claims?limit=2", nil); code != 200 || fmt.Sprint(ids(b)) != "[CLM-X3 CLM-Q2]" || b["total"] != float64(3) {
+		t.Fatalf("first page: %d %v", code, b)
+	}
+	if code, b, _ := e.do("GET", "/api/claims?limit=2&offset=2", nil); code != 200 || fmt.Sprint(ids(b)) != "[CLM-Q1]" || b["total"] != float64(3) {
+		t.Fatalf("second page: %d %v", code, b)
+	}
+	// search: case-insensitive, matches anywhere in the id; total counts the matches
+	if code, b, _ := e.do("GET", "/api/claims?q=q", nil); code != 200 || fmt.Sprint(ids(b)) != "[CLM-Q2 CLM-Q1]" || b["total"] != float64(2) {
+		t.Fatalf("search: %d %v", code, b)
+	}
+	if code, b, _ := e.do("GET", "/api/claims?q=NOPE", nil); code != 200 || len(b["claims"].([]any)) != 0 || b["total"] != float64(0) {
+		t.Fatalf("no match: %d %v", code, b)
+	}
+	for _, bad := range []string{"offset=-1", "offset=x", "q=a%20b", "q=a'%20OR%201=1", "limit=500"} {
+		if code, _, _ := e.do("GET", "/api/claims?"+bad, nil); code != 400 {
+			t.Errorf("%s: got %d, want 400", bad, code)
+		}
+	}
+}
+
+func TestClaimDetailShowsTheRecordedDecisionWithNotesAndDate(t *testing.T) {
+	e := newEnv(t, "claimgraph_test_api_decision")
+	e.submit(fnol("D1", "2026-09-01", nil))
+	if _, b, _ := e.do("GET", "/api/claims/D1", nil); b["recorded_decision"] != nil {
+		t.Fatalf("no decision yet: %v", b["recorded_decision"])
+	}
+	if code, b, _ := e.do("POST", "/api/claims/D1/disposition", map[string]any{"disposition": "needs_info", "notes": "asked the bank for the account holder"}); code != 201 {
+		t.Fatalf("record: %d %v", code, b)
+	}
+	_, b, _ := e.do("GET", "/api/claims/D1", nil)
+	d, _ := b["recorded_decision"].(map[string]any)
+	if d == nil || d["disposition"] != "needs_info" || d["notes"] != "asked the bank for the account holder" || d["recorded_at"] == "" || b["disposition"] != "needs_info" {
+		t.Fatalf("decision on the claim detail: %v", b)
+	}
+	// Re-recording replaces it: the detail shows the latest decision.
+	e.do("POST", "/api/claims/D1/disposition", map[string]any{"disposition": "not_substantiated", "notes": "holder confirmed"})
+	_, b, _ = e.do("GET", "/api/claims/D1", nil)
+	if d, _ := b["recorded_decision"].(map[string]any); d["disposition"] != "not_substantiated" || d["notes"] != "holder confirmed" {
+		t.Fatalf("updated decision: %v", b["recorded_decision"])
 	}
 }

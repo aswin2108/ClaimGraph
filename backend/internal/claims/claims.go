@@ -15,6 +15,8 @@ import (
 const (
 	DefaultListLimit = 50
 	MaxListLimit     = 200
+	MaxListOffset    = 1_000_000
+	MaxSearchLength  = 64
 )
 
 // ErrNotFound is returned when a claim does not exist.
@@ -66,6 +68,20 @@ const (
 		ORDER BY c.filing_date DESC, c.claim_id
 		LIMIT $limit`
 
+	// cypherPage pages the queue (newest filings first), optionally filtered to claim ids that
+	// contain $q. The page is cut before the case lookup, so only the shown claims are expanded.
+	cypherPage = `
+		MATCH (c:Claim) WHERE $q = '' OR c.claim_id CONTAINS $q
+		WITH c ORDER BY c.filing_date DESC, c.claim_id SKIP $offset LIMIT $limit
+		OPTIONAL MATCH (ic:InvestigationCase)-[:INVESTIGATES]->(c)
+		WITH c, ic ORDER BY ic.timestamp DESC
+		WITH c, collect(ic.disposition)[0] AS disposition
+		RETURN c.claim_id AS claim_id, c.filing_date AS filing_date, c.incident_date AS incident_date,
+		       c.amount AS amount, c.status AS status, c.policy_check_status AS pcs, disposition
+		ORDER BY c.filing_date DESC, c.claim_id`
+
+	cypherCount = `MATCH (c:Claim) WHERE $q = '' OR c.claim_id CONTAINS $q RETURN count(c) AS n`
+
 	cypherGet = `
 		MATCH (c:Claim {claim_id:$id})
 		OPTIONAL MATCH (ic:InvestigationCase)-[:INVESTIGATES]->(c)
@@ -93,6 +109,57 @@ const (
 		WHERE c.claim_id IN $ids
 		RETURN c.claim_id AS claim_id, t.tow_id AS tow_id, t.name AS tow_name`
 )
+
+// Page is one page of the claim queue.
+type Page struct {
+	Claims []Summary `json:"claims"`
+	Total  int       `json:"total"` // claims matching the search (all claims when q is empty)
+	Offset int       `json:"offset"`
+	Limit  int       `json:"limit"`
+	Query  string    `json:"q,omitempty"`
+}
+
+// ListPage returns claims newest filings first, skipping offset, optionally only those whose
+// id contains q (case-insensitive for the letters of an id: q is upper-cased).
+func ListPage(g *falkordb.Graph, limit, offset int, q string) (*Page, error) {
+	if limit == 0 {
+		limit = DefaultListLimit
+	}
+	if limit < 1 || limit > MaxListLimit {
+		return nil, fmt.Errorf("limit must be between 1 and %d", MaxListLimit)
+	}
+	if offset < 0 || offset > MaxListOffset {
+		return nil, fmt.Errorf("offset must be between 0 and %d", MaxListOffset)
+	}
+	q = strings.ToUpper(strings.TrimSpace(q))
+	if q != "" && (len(q) > MaxSearchLength || !ingest.ValidID(q)) {
+		return nil, fmt.Errorf("search must be up to %d letters, digits, '-' or '_'", MaxSearchLength)
+	}
+	p := &Page{Claims: []Summary{}, Offset: offset, Limit: limit, Query: q}
+	params := map[string]any{"limit": limit, "offset": offset, "q": q}
+	res, err := g.ROQuery(cypherPage, params, nil)
+	if err != nil {
+		if strings.Contains(err.Error(), "empty key") {
+			return p, nil // no graph yet: empty queue
+		}
+		return nil, fmt.Errorf("list claims: %w", err)
+	}
+	for res.Next() {
+		p.Claims = append(p.Claims, summary(res.Record().Get))
+	}
+	cnt, err := g.ROQuery(cypherCount, map[string]any{"q": q}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("count claims: %w", err)
+	}
+	if cnt.Next() {
+		if n, err := cnt.Record().GetByIndex(0); err == nil {
+			if v, isInt := n.(int64); isInt {
+				p.Total = int(v)
+			}
+		}
+	}
+	return p, nil
+}
 
 // List returns the claim queue, newest filings first.
 func List(g *falkordb.Graph, limit int) ([]Summary, error) {

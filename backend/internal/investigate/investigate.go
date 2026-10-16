@@ -86,7 +86,13 @@ type Result struct {
 	// Connected is every connected claim (not only the listed ones). Scoring uses it for
 	// breadth, timing and prior outcomes, so the list cap never changes a score.
 	Connected []ConnectedClaim `json:"-"`
-	Message   string           `json:"message,omitempty"`
+	// Direct is every claim connected by ONE transition, with all its paths, before the
+	// MaxRelatedClaims listing cap. Scoring reads the signal categories (payout, device,
+	// contact, address, repair shop, public IP) and household co-residence from it, so a
+	// direct link is never lost because 50 claims with stronger multi-hop evidence filled
+	// the list. Nil for results that were not capped (then RelatedClaims is complete).
+	Direct  []RelatedClaim `json:"-"`
+	Message string         `json:"message,omitempty"`
 	// Outcome is an explicit result type, so "nothing found" is a stated answer, never an
 	// empty list to interpret: connected | infrastructure_only | no_supporting_connection.
 	Outcome string          `json:"outcome"`
@@ -103,7 +109,7 @@ const (
 	OutcomeNoConnection       = "no_supporting_connection"
 )
 
-const infrastructureOnlyMessage = "This claim is linked to others only through shared infrastructure (a busy repair shop, carrier IP, kiosk or vendor account); no claim is connected through evidence specific to it."
+const infrastructureOnlyMessage = "This claim is linked to others only through shared infrastructure or context-only identifiers (a busy repair shop, carrier IP, kiosk, company network or repair vendor's settlement account); no claim is connected through evidence specific to it."
 
 // setOutcome states what the investigation found.
 func setOutcome(res *Result) {
@@ -256,6 +262,12 @@ func FindRelatedClaimsExcluding(g *falkordb.Graph, claimID string, maxHops int, 
 	res.Connected = connectedOf(res.RelatedClaims)
 	res.ConnectedTotal = len(res.Connected)
 	if len(res.RelatedClaims) > MaxRelatedClaims {
+		res.Direct = []RelatedClaim{}
+		for _, rc := range res.RelatedClaims {
+			if rc.Hops == 1 {
+				res.Direct = append(res.Direct, rc)
+			}
+		}
 		order(true)
 		res.RelatedClaims = res.RelatedClaims[:MaxRelatedClaims] // listing only; scoring uses Connected
 	}

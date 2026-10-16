@@ -28,6 +28,22 @@ const (
 // The value is above every T01-T30 fixture (at most 6 claims share an identifier there).
 const InfrastructureMinClaims = 20
 
+// ContextOnly reports whether a category is context-only evidence: a repair vendor's
+// direct-settlement account, a public (kiosk) device or a private/company-network IP. They
+// earn no points and, however few claims use them, never connect claims: the target's use
+// of one is reported with its exact user count (Result.InfrastructureLinks), but its users
+// are not related claims, earn no breadth or timing points and are never expanded. Before
+// this rule a vendor account shared by 18 claims linked a claim to 68 others and added 25
+// breadth/timing points to a score whose only real evidence was a shop and a carrier IP.
+// (The tow provider is context too, but it is never traversed at all.)
+func ContextOnly(category string) bool {
+	switch category {
+	case CatVendorPayout, CatPublicDevice, CatPrivateIP:
+		return true
+	}
+	return false
+}
+
 // StrongCategory reports whether a category is strong evidence (payout, private device,
 // contact, address).
 func StrongCategory(category string) bool {

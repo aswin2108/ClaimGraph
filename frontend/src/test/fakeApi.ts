@@ -163,7 +163,13 @@ export function installFakeApi(overrides: Record<string, Handler> = {}) {
 
   const defaults: Record<string, Handler> = {
     "GET /api/meta": () => meta,
-    "GET /api/claims": () => ({ claims }),
+    "GET /api/claims": (c) => {
+      const q = (c.query.get("q") ?? "").toUpperCase();
+      const offset = Number(c.query.get("offset") ?? 0);
+      const limit = Number(c.query.get("limit") ?? 100);
+      const hits = claims.filter((x) => !q || x.claim_id.includes(q));
+      return { claims: hits.slice(offset, offset + limit), total: hits.length, offset, limit, q: q || undefined };
+    },
     "GET /api/claims/:id": (_c, p) => detail(p.id),
     "GET /api/claims/:id/investigation": (_c, p) => reportA(p.id),
     "GET /api/claims/:id/graph": (c, p) => graph(p.id, c.query.get("exclude") ?? undefined),

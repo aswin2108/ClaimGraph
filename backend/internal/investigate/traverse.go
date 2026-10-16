@@ -141,8 +141,8 @@ func shapeQuery(kinds []bool, rs relSets, pair bool, branch int, aggregate bool)
 			// indegree() is O(1); a pattern comprehension counting edges cost ~25 ms per hub.
 			// Infrastructure (a weak/context identifier used by more than $infra claims; the
 			// overlay cost w > CostAddress marks weak/context evidence) is never expanded.
-			reach += fmt.Sprintf(" AND indegree(e%d) <= $fanout AND (indegree(e%d) <= $infra OR coalesce(r%da.w, %d) <= %d)",
-				i, i, i, ingest.CostContext, ingest.CostAddress)
+			reach += fmt.Sprintf(" AND indegree(e%d) <= $fanout AND ((indegree(e%d) <= $infra AND coalesce(r%da.w, %d) < %d) OR coalesce(r%da.w, %d) <= %d)",
+				i, i, i, ingest.CostContext, ingest.CostContext, i, ingest.CostContext, ingest.CostAddress)
 		}
 		// Second half: from the entity to the next claim, which must be a new claim.
 		var where []string
@@ -213,10 +213,10 @@ func directQuery(rs relSets) string {
 	for i, t := range rs.claim {
 		// Infrastructure is summarized by infrastructure(), not expanded into its users.
 		parts = append(parts, fmt.Sprintf(
-			"MATCH (x0:Claim {claim_id:$id})-[a:%s]->(e0) WHERE NOT (indegree(e0) > $infra AND coalesce(a.w, %d) > %d) "+
+			"MATCH (x0:Claim {claim_id:$id})-[a:%s]->(e0) WHERE NOT ((indegree(e0) > $infra OR coalesce(a.w, %d) >= %d) AND coalesce(a.w, %d) > %d) "+
 				"WITH x0, a, e0 MATCH (e0)<-[b:%s]-(x1:Claim) WHERE ID(x0) <> ID(x1) AND NOT (x0)-[:FILED_BY]->()<-[:FILED_BY]-(x1) "+
 				"RETURN [x0, e0, x1] AS nodes, [a, b] AS edges, [indegree(e0)] AS degrees, %d AS branch LIMIT $limit",
-			t, ingest.CostContext, ingest.CostAddress, t, i))
+			t, ingest.CostContext, ingest.CostContext, ingest.CostContext, ingest.CostAddress, t, i))
 	}
 	for i, t := range rs.claimant {
 		parts = append(parts, fmt.Sprintf(
@@ -461,12 +461,12 @@ func discover(g *falkordb.Graph, claimID string, maxHops int, exclude string) (c
 // $infra claims, with exact usage counts (one row per identifier, aggregated in FalkorDB).
 const cypherInfrastructure = `
 	MATCH (x0:Claim {claim_id:$id})-[a]->(e)
-	WHERE type(a) IN %s AND indegree(e) > $infra AND coalesce(a.w, %d) > %d
+	WHERE type(a) IN %s AND (indegree(e) > $infra OR (coalesce(a.w, %d) >= %d AND indegree(e) > 1)) AND coalesce(a.w, %d) > %d
 	RETURN e AS entity, type(a) AS rel, indegree(e) AS users, a.evidence_id AS evidence, a.recorded_at AS at`
 
 // infrastructure summarizes the shared infrastructure the target uses.
 func infrastructure(g *falkordb.Graph, claimID, exclude string) ([]InfrastructureLink, error) {
-	q := fmt.Sprintf(cypherInfrastructure, typeList(relSetsFor(exclude).claim), ingest.CostContext, ingest.CostAddress)
+	q := fmt.Sprintf(cypherInfrastructure, typeList(relSetsFor(exclude).claim), ingest.CostContext, ingest.CostContext, ingest.CostContext, ingest.CostAddress)
 	r, err := g.ROQuery(q, map[string]any{"id": claimID, "infra": InfrastructureMinClaims},
 		falkordb.NewQueryOptions().SetTimeout(queryTimeoutMs))
 	if err != nil {
@@ -507,6 +507,16 @@ func infrastructure(g *falkordb.Graph, claimID, exclude string) ([]Infrastructur
 }
 
 // usesCategory reports whether any step of the chain belongs to the excluded category.
+// usesContextOnly reports whether a chain goes through a context-only identifier.
+func usesContextOnly(chain []Step) bool {
+	for _, s := range chain {
+		if ContextOnly(SignalCategory(s)) {
+			return true
+		}
+	}
+	return false
+}
+
 func usesCategory(chain []Step, category string) bool {
 	if category == "" {
 		return false
@@ -582,7 +592,9 @@ func EvidencePaths(g *falkordb.Graph, claimID, relatedID string, maxHops int, ex
 		}
 		var kept [][]Step
 		for _, c := range chains {
-			if !usesCategory(c, exclude) {
+			// Same rules as the investigation: context-only identifiers never connect claims
+			// (a one-transition pair query has no staged guard to drop them in FalkorDB).
+			if !usesCategory(c, exclude) && !usesContextOnly(c) {
 				kept = append(kept, c)
 			}
 		}

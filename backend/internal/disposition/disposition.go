@@ -149,3 +149,37 @@ func cleanNotes(s string) (string, error) {
 	}
 	return s, nil
 }
+
+// cypherLatest returns the most recent recorded outcome on a claim (seeded cases included).
+const cypherLatest = `
+	MATCH (ic:InvestigationCase)-[:INVESTIGATES]->(c:Claim {claim_id:$claim_id})
+	RETURN ic.case_id AS case_id, ic.disposition AS disposition, ic.notes AS notes,
+	       ic.timestamp AS ts, ic.source AS src
+	ORDER BY ic.timestamp DESC LIMIT 1`
+
+// Latest returns the most recent recorded outcome on a claim, or nil when there is none.
+// It includes the investigator's free-text notes, so it is for the human UI only: the agent's
+// tools never call it (notes are never sent to the model).
+func Latest(g *falkordb.Graph, claimID string) (*Case, error) {
+	if !ingest.ValidID(claimID) {
+		return nil, fmt.Errorf("%w: invalid claim_id %q", ErrInvalid, claimID)
+	}
+	res, err := g.ROQuery(cypherLatest, map[string]any{"claim_id": claimID}, nil)
+	if err != nil {
+		if strings.Contains(err.Error(), "empty key") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("latest disposition: %w", err)
+	}
+	if !res.Next() {
+		return nil, nil
+	}
+	rec := res.Record()
+	str := func(k string) string {
+		v, _ := rec.Get(k)
+		s, _ := v.(string)
+		return s
+	}
+	return &Case{CaseID: str("case_id"), ClaimID: claimID, Disposition: str("disposition"), Notes: str("notes"),
+		RecordedAt: str("ts"), Source: str("src")}, nil
+}

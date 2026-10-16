@@ -19,6 +19,14 @@ export interface ClaimSummary {
   disposition?: string;
 }
 
+export interface ClaimPage {
+  claims: ClaimSummary[];
+  total: number; // claims matching the search (all claims when q is empty)
+  offset: number;
+  limit: number;
+  q?: string;
+}
+
 export interface Entity {
   id: string;
   name?: string;
@@ -29,7 +37,16 @@ export interface Entity {
   end?: string;
 }
 
+export interface RecordedDecision {
+  case_id: string;
+  disposition: string;
+  notes?: string;
+  recorded_at: string;
+  source?: string; // investigator_simulated = recorded in this app; anything else = the synthetic history
+}
+
 export interface ClaimDetail extends ClaimSummary {
+  recorded_decision?: RecordedDecision; // latest outcome with notes and date (UI only; never sent to the model)
   loss_type?: string;
   incident_location?: string;
   claimant?: Entity;

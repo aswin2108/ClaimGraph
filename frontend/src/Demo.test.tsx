@@ -134,3 +134,75 @@ describe("graph size next to the traversal timing (S2)", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("claim queue: search and paging over the whole book", () => {
+  const many = Array.from({ length: 130 }, (_, i) => summary(`CLM-${String(100000 + i)}`, { filing_date: `2026-${String(1 + (i % 9)).padStart(2, "0")}-01` }));
+
+  it("loads one page, shows the total, and 'Load more' appends the next page once", async () => {
+    const api = installFakeApi();
+    api.setClaims(many);
+    render(<App />);
+    const list = await screen.findByRole("list", { name: "Claim queue" });
+    await waitFor(() => expect(within(list).getAllByRole("button", { name: /^CLM-/ })).toHaveLength(100));
+    expect(screen.getByRole("tab", { name: "Claims · 130" })).toBeInTheDocument();
+    expect(screen.getByText("Showing 100 of 130, newest first")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Load more" }));
+    await waitFor(() => expect(within(list).getAllByRole("button", { name: /^CLM-/ })).toHaveLength(130));
+    expect(api.where("GET", "/api/claims").filter((c) => c.path === "/api/claims").map((c) => c.query.get("offset"))).toEqual(["0", "100"]);
+    expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+  });
+
+  it("searching by claim id asks the API once the typing pauses, and shows the matches", async () => {
+    const api = installFakeApi();
+    api.setClaims(many);
+    render(<App />);
+    await screen.findByRole("tab", { name: "Claims · 130" });
+    await userEvent.type(screen.getByRole("searchbox", { name: "Search claims by id" }), "10012");
+    const list = screen.getByRole("list", { name: "Claim queue" });
+    await waitFor(() => expect(within(list).getAllByRole("button", { name: /^CLM-/ })).toHaveLength(10));
+    expect(screen.getByRole("tab", { name: "Claims · 10" })).toBeInTheDocument();
+    const searches = api.where("GET", "/api/claims").filter((c) => c.path === "/api/claims" && c.query.get("q"));
+    expect(searches.at(-1)!.query.get("q")).toBe("10012");
+    expect(searches.length).toBeLessThanOrEqual(2); // debounced, not one request per keystroke
+    await userEvent.click(within(list).getByRole("button", { name: /CLM-100125/ }));
+    await waitFor(() => expect(screen.getByTestId("graph")).toHaveAttribute("data-target", "CLM-100125"));
+  });
+
+  it("a search with no match says so", async () => {
+    installFakeApi();
+    render(<App />);
+    await screen.findByText("High Priority");
+    await userEvent.type(screen.getByRole("searchbox", { name: "Search claims by id" }), "ZZZ");
+    expect(await screen.findByText('No claim id contains "ZZZ".')).toBeInTheDocument();
+  });
+});
+
+describe("returning to a decided claim", () => {
+  it("shows the earlier decision with its date and notes, and the new one after recording again", async () => {
+    let decision: { case_id: string; disposition: string; notes?: string; recorded_at: string; source: string } | undefined = {
+      case_id: "CASE-CLM-1", disposition: "needs_info", notes: "waiting for the bank", recorded_at: "2026-10-15T09:30:00Z", source: "investigator_simulated",
+    };
+    const api = installFakeApi({
+      "GET /api/claims/:id": (_c, p) => ({ ...summary(p.id), disposition: decision?.disposition, recorded_decision: p.id === "CLM-1" ? decision : undefined }),
+      "POST /api/claims/:id/disposition": (c, p) => {
+        decision = { case_id: `CASE-${p.id}`, disposition: c.body.disposition, notes: c.body.notes, recorded_at: "2026-10-16T11:00:00Z", source: "investigator_simulated" };
+        return { ...decision, claim_id: p.id, created: false, previous_disposition: "needs_info" };
+      },
+    });
+    await ready(api);
+    const box = await screen.findByLabelText("Recorded decision");
+    expect(box).toHaveTextContent("Needs More Information");
+    expect(box).toHaveTextContent("15 Oct 2026");
+    expect(box).toHaveTextContent("“waiting for the bank”");
+
+    await userEvent.type(screen.getByLabelText("Disposition notes"), "holder confirmed");
+    await userEvent.click(screen.getByRole("button", { name: "Not Substantiated" }));
+    await waitFor(() => expect(screen.getByLabelText("Recorded decision")).toHaveTextContent("Not Substantiated"));
+    expect(screen.getByLabelText("Recorded decision")).toHaveTextContent("“holder confirmed”");
+  });
+
+  it("shows no decision box for a claim nobody has decided", async () => {
+    await ready(installFakeApi());
+    expect(screen.queryByLabelText("Recorded decision")).not.toBeInTheDocument();
+  });
+});

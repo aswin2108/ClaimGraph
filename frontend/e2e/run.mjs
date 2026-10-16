@@ -174,6 +174,15 @@ async function main() {
   await waitFor(() => window.__cy.elements(".hidden").length === 0, "replay done", 8000);
   check("replay ends with the whole graph visible", (await cyInfo()).hidden === 0);
   check("replay sends no network requests", since(m).length === 0);
+  // A highlighted evidence path must not survive a replay (it used to stay drawn and grow over itself).
+  await page.evaluate(() => document.querySelector(".ev-head").click());
+  await sleep(300);
+  check("clicking a connected claim highlights its path", (await page.evaluate(() => window.__cy.elements(".onpath").length)) > 0);
+  await click("▶ Replay traversal");
+  await sleep(300);
+  const replayed = await page.evaluate(() => ({ onpath: window.__cy.elements(".onpath").length, hidden: window.__cy.elements(".hidden").length }));
+  check("replay clears the highlighted path and starts from the target", replayed.onpath === 0 && replayed.hidden > 0, JSON.stringify(replayed));
+  await waitFor(() => window.__cy.elements(".hidden").length === 0, "replay done", 8000);
 
   console.log("\nHops selector");
   m = mark();

@@ -6,7 +6,12 @@ import type { Preset } from "../presets";
 import IntakeCard from "./IntakeCard";
 
 interface Props {
-  claims: ClaimSummary[];
+  claims: ClaimSummary[]; // the loaded pages of the queue
+  total: number; // claims matching the search
+  search: string;
+  onSearch: (q: string) => void;
+  onLoadMore: () => void;
+  loadingMore: boolean;
   selected: string | null;
   onSelect: (id: string) => void;
   onSubmitted: (id: string) => void;
@@ -115,19 +120,18 @@ function RingQueue({ version, activeRingId, onOpen }: { version: number; activeR
   );
 }
 
-export default function QueuePanel({ claims, selected, onSelect, onSubmitted, ringsVersion, activeRingId, onOpenRing, presets, intakeKey }: Props) {
+export default function QueuePanel(p: Props) {
+  const { claims, total, search, onSearch, onLoadMore, loadingMore, selected, onSelect, onSubmitted, ringsVersion, activeRingId, onOpenRing, presets, intakeKey } = p;
   const [tab, setTab] = useState<"claims" | "rings">("claims");
   const [ringsOpened, setRingsOpened] = useState(false); // the ring list stays loaded once opened
   return (
     <div className="side">
-      <IntakeCard key={intakeKey} presets={presets} onSubmitted={onSubmitted} onOpenRing={onOpenRing} />
-
-      <section className="card grow">
+      <section className="card queue-card">
         <header className="card-head">
           <h2>Queue</h2>
           <div className="tabs" role="tablist" aria-label="Queue view">
             <button role="tab" aria-selected={tab === "claims"} className={tab === "claims" ? "on" : ""} onClick={() => setTab("claims")}>
-              Claims · {claims.length}
+              Claims · {(search ? total : Math.max(total, claims.length)).toLocaleString("en-US")}
             </button>
             <button role="tab" aria-selected={tab === "rings"} className={tab === "rings" ? "on" : ""} onClick={() => (setTab("rings"), setRingsOpened(true))}>
               Rings
@@ -140,26 +144,51 @@ export default function QueuePanel({ claims, selected, onSelect, onSubmitted, ri
           </div>
         )}
         {tab === "claims" && (
-        <ul className="queue" aria-label="Claim queue">
-          {claims.map((c) => (
-            <li key={c.claim_id}>
-              <button className={`q-item ${c.claim_id === selected ? "on" : ""}`} onClick={() => onSelect(c.claim_id)}>
-                <div className="q-top">
-                  <strong>{c.claim_id}</strong>
-                  <span className="muted small">{money(c.amount)}</span>
-                </div>
-                <div className="q-sub">
-                  <span className="muted small">Filed {c.filing_date}</span>
-                  <span className={`dot ${c.policy_check_status === "passed" ? "dot-ok" : c.policy_check_status === "failed" ? "dot-off" : "dot-unk"}`} title={`Policy checks: ${c.policy_check_status}`} />
-                  {c.disposition && <span className="chip small-chip">{DISPOSITION_LABEL[c.disposition] ?? c.disposition}</span>}
-                </div>
-              </button>
-            </li>
-          ))}
-          {claims.length === 0 && <li className="muted small pad">No claims yet. Run the seed command or submit an FNOL.</li>}
-        </ul>
+          <>
+            <input
+              className="q-search"
+              type="search"
+              placeholder="Search claim id, e.g. 120001"
+              aria-label="Search claims by id"
+              value={search}
+              maxLength={64}
+              onChange={(e) => onSearch(e.target.value.replace(/[^A-Za-z0-9_-]/g, ""))}
+            />
+            <ul className="queue" aria-label="Claim queue">
+              {claims.map((c) => (
+                <li key={c.claim_id}>
+                  <button className={`q-item ${c.claim_id === selected ? "on" : ""}`} onClick={() => onSelect(c.claim_id)}>
+                    <div className="q-top">
+                      <strong>{c.claim_id}</strong>
+                      <span className="muted small">{money(c.amount)}</span>
+                    </div>
+                    <div className="q-sub">
+                      <span className="muted small">Filed {c.filing_date}</span>
+                      <span className={`dot ${c.policy_check_status === "passed" ? "dot-ok" : c.policy_check_status === "failed" ? "dot-off" : "dot-unk"}`} title={`Policy checks: ${c.policy_check_status}`} />
+                      {c.disposition && <span className="chip small-chip">{DISPOSITION_LABEL[c.disposition] ?? c.disposition}</span>}
+                    </div>
+                  </button>
+                </li>
+              ))}
+              {claims.length === 0 && (
+                <li className="muted small pad">{search ? `No claim id contains "${search}".` : "No claims yet. Run the seed command or submit an FNOL."}</li>
+              )}
+              {claims.length < total && (
+                <li className="q-more">
+                  <span className="muted tiny">
+                    Showing {claims.length.toLocaleString("en-US")} of {total.toLocaleString("en-US")}, newest first
+                  </span>
+                  <button className="btn btn-ghost btn-small" onClick={onLoadMore} disabled={loadingMore}>
+                    {loadingMore ? "Loading…" : "Load more"}
+                  </button>
+                </li>
+              )}
+            </ul>
+          </>
         )}
       </section>
+
+      <IntakeCard key={intakeKey} presets={presets} onSubmitted={onSubmitted} onOpenRing={onOpenRing} />
     </div>
   );
 }

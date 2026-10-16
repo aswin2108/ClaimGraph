@@ -67,22 +67,39 @@ func (s *Server) handleSubmitFNOL(w http.ResponseWriter, r *http.Request) {
 	}{res, alert})
 }
 
-// GET /api/claims?limit=N — the claim queue.
+// GET /api/claims?limit=N&offset=M&q=TEXT — the claim queue, newest filings first, with the
+// total count; q keeps claims whose id contains TEXT.
 func (s *Server) handleListClaims(w http.ResponseWriter, r *http.Request) {
-	limit := 0
-	if v := r.URL.Query().Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 || n > claims.MaxListLimit {
-			s.handle(w, badRequest("limit must be an integer between 1 and "+strconv.Itoa(claims.MaxListLimit)))
-			return
+	intParam := func(name string, lo, hi int) (int, bool) {
+		v := r.URL.Query().Get(name)
+		if v == "" {
+			return 0, true
 		}
-		limit = n
+		n, err := strconv.Atoi(v)
+		if err != nil || n < lo || n > hi {
+			s.handle(w, badRequest(name+" must be an integer between "+strconv.Itoa(lo)+" and "+strconv.Itoa(hi)))
+			return 0, false
+		}
+		return n, true
 	}
-	list, err := claims.List(s.g, limit)
+	limit, ok := intParam("limit", 1, claims.MaxListLimit)
+	if !ok {
+		return
+	}
+	offset, ok := intParam("offset", 0, claims.MaxListOffset)
+	if !ok {
+		return
+	}
+	q := r.URL.Query().Get("q")
+	if strings.TrimSpace(q) != "" && (len(q) > claims.MaxSearchLength || !ingest.ValidID(strings.TrimSpace(q))) {
+		s.handle(w, badRequest("q must be up to 64 letters, digits, '-' or '_'"))
+		return
+	}
+	page, err := claims.ListPage(s.g, limit, offset, q)
 	if s.handle(w, err) {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"claims": list})
+	writeJSON(w, http.StatusOK, page)
 }
 
 // GET /api/claims/{id} — claim detail with ordinary policy-check status.
@@ -95,7 +112,18 @@ func (s *Server) handleGetClaim(w http.ResponseWriter, r *http.Request) {
 	if s.handle(w, err) {
 		return
 	}
-	writeJSON(w, http.StatusOK, c)
+	// The latest recorded outcome with its date and notes, so an investigator returning to the
+	// claim sees the earlier decision. Added here, not in claims.Get: the agent's GetClaim tool
+	// is built on claims.Get and must never receive free-text notes.
+	decision, err := disposition.Latest(s.g, id)
+	if err != nil {
+		s.logger.Printf("latest decision for %s: %v", id, err)
+		decision = nil
+	}
+	writeJSON(w, http.StatusOK, struct {
+		*claims.Claim
+		Decision *disposition.Case `json:"recorded_decision,omitempty"`
+	}{c, decision})
 }
 
 // GET /api/claims/{id}/investigation?hops=N — related claims, evidence paths,

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { RecordedDecision } from "../types";
 import { DISPOSITION_LABEL } from "../ui";
 
 interface Props {
@@ -6,6 +7,8 @@ interface Props {
   claimId: string | null;
   dispositions: string[];
   current?: string;
+  /** The latest recorded decision on this claim, with its date and notes. */
+  decision?: RecordedDecision | null;
   busy: boolean;
   message: { ok: boolean; text: string } | null;
   onRecord: (disposition: string, notes: string) => Promise<boolean>;
@@ -13,7 +16,12 @@ interface Props {
 
 const CONSEQUENTIAL = "confirmed_fraud";
 
-export default function DispositionPanel({ claimId, dispositions, current, busy, message, onRecord }: Props) {
+const when = (iso: string) => {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
+};
+
+export default function DispositionPanel({ claimId, dispositions, current, decision, busy, message, onRecord }: Props) {
   const [notes, setNotes] = useState("");
   const [confirming, setConfirming] = useState(false);
 
@@ -37,6 +45,20 @@ export default function DispositionPanel({ claimId, dispositions, current, busy,
         <h2>Record disposition</h2>
         {current && <span className="chip">{DISPOSITION_LABEL[current] ?? current}</span>}
       </header>
+      {decision && (
+        <div className="decision" aria-label="Recorded decision">
+          <div>
+            <strong>{DISPOSITION_LABEL[decision.disposition] ?? decision.disposition}</strong>
+            <span className="muted small">
+              {" "}
+              · recorded {when(decision.recorded_at)}
+              {decision.source && decision.source !== "investigator_simulated" ? " · from the synthetic case history" : ""}
+            </span>
+          </div>
+          {decision.notes ? <p className="small">“{decision.notes}”</p> : <p className="muted small">No notes.</p>}
+          <p className="muted tiny">Recording again replaces this decision.</p>
+        </div>
+      )}
       <p className="muted small">A simulated investigator decision. It is stored in the graph and shown on future related investigations.</p>
       <textarea
         value={notes}

@@ -55,13 +55,52 @@ export default function App() {
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selected;
 
-  const refreshQueue = useCallback(async () => {
+  // The queue shows one page of claims (newest first), optionally filtered by claim id; "Load more" appends.
+  const [queueTotal, setQueueTotal] = useState(0);
+  const [queueQ, setQueueQ] = useState("");
+  const [moreBusy, setMoreBusy] = useState(false);
+  const queueQRef = useRef("");
+  queueQRef.current = queueQ;
+  const queueTicket = useRef(0);
+  const refreshQueue = useCallback(async (q: string = queueQRef.current) => {
+    const mine = ++queueTicket.current;
     try {
-      setQueue(await api.claims());
+      const p = await api.claims({ q });
+      if (mine === queueTicket.current) {
+        setQueue(p.claims);
+        setQueueTotal(p.total);
+      }
+      return p.claims;
     } catch (e) {
       setError(msg(e));
+      return [];
     }
   }, []);
+  const loadMore = async () => {
+    const mine = queueTicket.current;
+    setMoreBusy(true);
+    try {
+      const p = await api.claims({ q: queueQ, offset: queue.length });
+      if (mine === queueTicket.current) {
+        setQueue((cur) => [...cur, ...p.claims.filter((c) => !cur.some((x) => x.claim_id === c.claim_id))]);
+        setQueueTotal(p.total);
+      }
+    } catch (e) {
+      setError(msg(e));
+    } finally {
+      setMoreBusy(false);
+    }
+  };
+  // Typing in the search box refreshes the list shortly after the last keystroke.
+  const searchStarted = useRef(false);
+  useEffect(() => {
+    if (!searchStarted.current) {
+      searchStarted.current = true;
+      return;
+    }
+    const t = window.setTimeout(() => refreshQueue(queueQ), 250);
+    return () => window.clearTimeout(t);
+  }, [queueQ, refreshQueue]);
 
   const refreshGraphSize = useCallback(() => {
     api.graphStats().then(setGraphSize).catch(() => setGraphSize(null)); // context only; never blocks the app
@@ -72,9 +111,10 @@ export default function App() {
     refreshGraphSize();
     api
       .claims()
-      .then((c) => {
-        setQueue(c);
-        if (c.length) setSelected(c[0].claim_id);
+      .then((p) => {
+        setQueue(p.claims);
+        setQueueTotal(p.total);
+        if (p.claims.length) setSelected(p.claims[0].claim_id);
       })
       .catch((e) => setError(msg(e)));
   }, []);
@@ -162,8 +202,8 @@ export default function App() {
       setIntakeKey((k) => k + 1);
       refreshGraphSize();
       api.meta().then(setMeta).catch(() => undefined);
-      const c = await api.claims();
-      setQueue(c);
+      setQueueQ("");
+      const c = await refreshQueue("");
       const first = c[0]?.claim_id ?? null;
       if (first && first === selectedRef.current) investigate(first);
       else setSelected(first);
@@ -220,6 +260,7 @@ export default function App() {
         text: `${c.created ? "Recorded" : "Updated"}: ${DISPOSITION_LABEL[c.disposition]}. It will appear in future related investigations.`,
       });
       refreshQueue();
+      api.claim(selected).then(setDetail).catch(() => undefined); // the selected claim may not be on the loaded page
       loadRing(selected, false); // the ring's recorded cases changed
       setRingsVersion((v) => v + 1);
       return true;
@@ -232,7 +273,7 @@ export default function App() {
   };
 
   const shown = cf ? cf.counterfactual : report;
-  const current = queue.find((c) => c.claim_id === selected)?.disposition;
+  const current = queue.find((c) => c.claim_id === selected)?.disposition ?? (detail?.claim_id === selected ? detail?.disposition : undefined);
 
   return (
     <div className="app">
@@ -287,6 +328,11 @@ export default function App() {
       <main className="layout">
         <QueuePanel
           claims={queue}
+          total={queueTotal}
+          search={queueQ}
+          onSearch={setQueueQ}
+          onLoadMore={loadMore}
+          loadingMore={moreBusy}
           selected={selected}
           onSelect={setSelected}
           ringsVersion={ringsVersion}
@@ -353,6 +399,7 @@ export default function App() {
             claimId={selected}
             dispositions={meta?.dispositions ?? []}
             current={current}
+            decision={detail?.claim_id === selected ? detail?.recorded_decision : null}
             busy={dispBusy}
             message={dispMsg}
             onRecord={record}

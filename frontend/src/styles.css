@@ -136,10 +136,32 @@ button:disabled {
   gap: 16px;
   min-width: 0;
 }
-.side {
-  position: sticky;
-  top: 12px;
-  max-height: calc(100vh - 24px);
+/* The side column scrolls with the page: the queue on top (fixed height, scrolls inside), the intake card below. */
+.queue-card {
+  height: 520px;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 8px;
+}
+.q-search {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 13px;
+  margin-bottom: 6px;
+  background: #fcfcff;
+  color: var(--ink);
+}
+.queue-card .queue {
+  min-height: 0;
+}
+.q-more {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 6px 4px;
 }
 .foot {
   margin-top: 16px;
@@ -630,6 +652,39 @@ p.center {
   height: 10px;
   border-radius: 50%;
   display: inline-block;
+}
+.hint {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid #cbd5e1;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: help;
+}
+.hint-pop {
+  display: none;
+  position: absolute;
+  top: 24px;
+  right: -8px;
+  width: 300px;
+  z-index: 20;
+  background: rgba(30, 27, 75, 0.95);
+  color: #fff;
+  font-weight: 400;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 10px 12px;
+  border-radius: 12px;
+  text-align: left;
+}
+.hint:hover .hint-pop,
+.hint:focus .hint-pop {
+  display: block;
 }
 .select {
   display: inline-flex;
@@ -1197,6 +1252,18 @@ textarea {
   color: var(--text);
   background: #fcfcff;
 }
+.decision {
+  border: 1px solid var(--line);
+  background: #f8fafc;
+  border-radius: 12px;
+  padding: 9px 11px;
+  margin-bottom: 8px;
+  display: grid;
+  gap: 3px;
+}
+.decision strong {
+  color: var(--ink);
+}
 .dispo {
   display: grid;
   gap: 8px;
@@ -1218,9 +1285,8 @@ textarea {
   .layout {
     grid-template-columns: 1fr;
   }
-  .side {
-    position: static;
-    max-height: none;
+  .queue-card {
+    height: 420px;
   }
   .graph-stage,
   .graph-stage.ring-stage {

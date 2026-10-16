@@ -4,6 +4,7 @@ package investigate
 //
 // It predates the infrastructure rule (InfrastructureMinClaims) and does not apply it, so
 // the engines are only compared on graphs where no identifier has more than that many users.
+// It does apply the context-only rule (ContextOnly): those identifiers never connect claims.
 //
 // This is the original Go-driven traversal: Go chains up to MaxHops one-transition
 // Cypher queries and does the breadth-first search itself. Production now lets
@@ -116,6 +117,9 @@ func FindRelatedClaimsReference(g *falkordb.Graph, claimID string, maxHops int, 
 			if excludeCategory != "" && SignalCategory(st) == excludeCategory {
 				continue // counterfactual: this evidence is ignored in the analytical view
 			}
+			if ContextOnly(SignalCategory(st)) {
+				continue // context-only identifiers never connect claims (see ContextOnly)
+			}
 			for _, parent := range frontier[st.FromClaim] {
 				if hop > 1 && len(next[st.ToClaim]) >= maxPartialPerClaim {
 					res.PathsTrimmed = true // bound path fan-out on dense graphs
@@ -158,6 +162,13 @@ func FindRelatedClaimsReference(g *falkordb.Graph, claimID string, maxHops int, 
 	if len(res.RelatedClaims) > MaxRelatedClaims {
 		res.RelatedClaims = res.RelatedClaims[:MaxRelatedClaims]
 	}
+	// The identifier summary (context-only identifiers, infrastructure) is one independent
+	// query, not traversal logic, so both engines report it with the same function.
+	links, err := infrastructure(g, claimID, excludeCategory)
+	if err != nil {
+		return nil, err
+	}
+	res.InfrastructureLinks = links
 	setOutcome(res)
 	return res, nil
 }

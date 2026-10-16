@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"claimgraph/internal/ingest"
+	"claimgraph/internal/investigate"
 )
 
 func tow(id string) mod { return func(f *ingest.FNOL) { f.TowProviderID = id } }
@@ -137,5 +138,40 @@ func TestInfrastructureDoesNotInflateBreadthOrTiming(t *testing.T) {
 		if f.Name == FTemporal {
 			t.Fatal("claims reached only through a busy shop must not earn the timing bonus")
 		}
+	}
+}
+
+// The 50-claim listing cap is presentation only: a direct repair-shop link left out of the
+// list (52 claims with stronger payout evidence filled it) still earns its category points.
+func TestDirectLinksCutFromTheListStillScore(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow")
+	}
+	g := scratch(t, "claimgraph_test_scoring_listcap")
+	claims := []*ingest.FNOL{mk("T", "2026-06-01", payout("PAY-MULE"), shop("SHOP-S"))}
+	for i := 0; i < investigate.MaxRelatedClaims+2; i++ {
+		claims = append(claims, mk(fmt.Sprintf("M%02d", i), "2025-01-01", payout("PAY-MULE")))
+	}
+	for i := 0; i < 3; i++ {
+		claims = append(claims, mk(fmt.Sprintf("S%d", i), "2025-01-01", shop("SHOP-S")))
+	}
+	load(t, g, claims, nil)
+	r, err := Analyze(g, "T", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := map[string]bool{}
+	for _, rc := range r.Investigation.RelatedClaims {
+		listed[rc.ClaimID] = true
+	}
+	if len(r.Investigation.RelatedClaims) != investigate.MaxRelatedClaims || listed["S0"] {
+		t.Fatalf("setup: the list should be full of payout links and leave the shop links out: %d listed", len(r.Investigation.RelatedClaims))
+	}
+	pts := map[string]int{}
+	for _, f := range r.Factors {
+		pts[f.Name] = f.Points
+	}
+	if pts[FSharedPayout] != PtsPayout || pts[FSharedRepair] != PtsRepairShop {
+		t.Fatalf("both direct categories must score (payout %d, shop %d): %+v", pts[FSharedPayout], pts[FSharedRepair], r.Factors)
 	}
 }
