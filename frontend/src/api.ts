@@ -10,6 +10,7 @@ import type {
   Meta,
   Report,
   Ring,
+  RingList,
   StrongestLink,
 } from "./types";
 
@@ -62,6 +63,7 @@ export const api = {
     call<DispositionCase>(`/api/claims/${enc(id)}/disposition`, json("POST", { disposition, notes })),
   agent: (id: string, hops: number) => call<AgentResult>(`/api/claims/${enc(id)}/agent`, json("POST", { hops })),
   ring: (id: string) => call<Ring>(`/api/claims/${enc(id)}/ring`),
+  rings: () => call<RingList>("/api/rings?min_size=3&limit=20"),
   link: (id: string, other: string) => call<StrongestLink>(`/api/claims/${enc(id)}/link/${enc(other)}`),
   submitFNOL: (f: FNOL) => call<FNOLResult>("/api/fnol", json("POST", f)),
 };

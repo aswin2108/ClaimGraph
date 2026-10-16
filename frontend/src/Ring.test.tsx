@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
-import { deferred, HttpError, installFakeApi, loneRing, reportA, strongestLink } from "./test/fakeApi";
+import { deferred, HttpError, installFakeApi, loneRing, reportA, ringList, strongestLink } from "./test/fakeApi";
 
 // Cytoscape needs a real canvas; both canvases are covered by the browser e2e tests.
 vi.mock("./components/GraphPanel", () => ({
@@ -155,5 +155,62 @@ describe("claim ring (algo.WCC + algo.MSF)", () => {
     await openRing();
     expect(screen.queryByText(/ring only/)).not.toBeInTheDocument();
     expect(screen.queryByText(/not reached by/)).not.toBeInTheDocument();
+  });
+});
+
+describe("ring queue (book-wide algo.WCC, review order)", () => {
+  const rings = () => within(screen.getByRole("list", { name: "Ring queue" }));
+
+  it("is loaded only when its tab is opened, once, and survives switching tabs", async () => {
+    const api = await ready(installFakeApi());
+    expect(api.count("GET", "/api/rings")).toBe(0);
+    await userEvent.click(screen.getByRole("tab", { name: "Rings" }));
+    expect(await rings().findByRole("button", { name: "RING-CLM-1, 3 claims, Spans households, Confirmed case on a member" })).toBeInTheDocument();
+    expect(rings().getByRole("button", { name: "RING-CLM-40, 4 claims" })).toBeInTheDocument();
+    expect(screen.getByText(/Queue order only, not a score/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: /Claims/ }));
+    await userEvent.click(screen.getByRole("tab", { name: "Rings" }));
+    expect(api.count("GET", "/api/rings")).toBe(1);
+    expect(api.count("POST", "/agent")).toBe(0);
+  });
+
+  it("marks the ring of the selected claim, and opening another ring investigates its member in the ring view", async () => {
+    const api = await ready(installFakeApi());
+    await userEvent.click(screen.getByRole("tab", { name: "Rings" }));
+    expect(await rings().findByRole("button", { name: /^RING-CLM-1,/ })).toHaveClass("on"); // CLM-1 is selected
+    await userEvent.click(rings().getByRole("button", { name: /^RING-CLM-40,/ }));
+    await waitFor(() => expect(screen.getByTestId("ring-graph")).toHaveAttribute("data-target", "CLM-40"));
+    expect(api.where("GET", "/api/claims/CLM-40/investigation")).toHaveLength(1);
+    expect(api.where("GET", "/api/claims/CLM-40/ring")).toHaveLength(1);
+    expect(api.count("GET", "/api/rings")).toBe(1);
+    expect(api.count("POST", "/agent")).toBe(0);
+  });
+
+  it("reloads after a new claim or a recorded outcome, which can change the rings", async () => {
+    const api = await ready(installFakeApi());
+    await userEvent.click(screen.getByRole("tab", { name: "Rings" }));
+    await rings().findByRole("button", { name: /^RING-CLM-1,/ });
+    await userEvent.click(screen.getByRole("button", { name: "Not Substantiated" }));
+    await waitFor(() => expect(api.count("GET", "/api/rings")).toBe(2));
+    await userEvent.click(screen.getByRole("button", { name: "Submit synthetic FNOL" }));
+    await waitFor(() => expect(api.count("GET", "/api/rings")).toBe(3));
+  });
+
+  it("shows an algorithm failure in the list and allows a retry", async () => {
+    let fail = true;
+    const api = await ready(
+      installFakeApi({
+        "GET /api/rings": () => {
+          if (fail) throw new HttpError(503, { error: "graph algorithms are not ready" });
+          return ringList();
+        },
+      }),
+    );
+    await userEvent.click(screen.getByRole("tab", { name: "Rings" }));
+    expect(await screen.findByText("graph algorithms are not ready")).toBeInTheDocument();
+    fail = false;
+    await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await rings().findByRole("button", { name: /^RING-CLM-1,/ })).toBeInTheDocument();
+    expect(api.count("GET", "/api/rings")).toBe(2);
   });
 });

@@ -1,5 +1,5 @@
 import type { Path, Report, Step } from "../types";
-import { CATEGORY_COLOR, DISPOSITION_LABEL, ENTITY_LABEL } from "../ui";
+import { CATEGORY_COLOR, CATEGORY_LABEL, DISPOSITION_LABEL, ENTITY_LABEL } from "../ui";
 
 interface Props {
   report: Report | null;
@@ -50,16 +50,49 @@ function PathTrail({ path }: { path: Path }) {
   );
 }
 
+// "Nothing found" is a stated result, never an empty list to interpret.
+const OUTCOME: Record<string, { title: string; body: string }> = {
+  no_supporting_connection: {
+    title: "No supporting connection found in the graph",
+    body: "No claim shares evidence with this one within the searched hops. This is a stated result, not a clearance: the graph only knows the evidence recorded in it.",
+  },
+  infrastructure_only: {
+    title: "Linked only through shared infrastructure",
+    body: "Every link runs through infrastructure that many unrelated claims use, so it is counted once as weak evidence and its users are not treated as connections.",
+  },
+};
+
 export default function EvidencePanel({ report, focusClaim, onFocus }: Props) {
   const inv = report?.investigation;
+  const stats = inv?.traversal_stats;
+  const total = inv?.connected_total ?? inv?.related_claims.length ?? 0;
+  const outcome = inv?.outcome ? OUTCOME[inv.outcome] : undefined;
   return (
     <section className="card evidence">
       <header className="card-head">
         <h2>Evidence</h2>
-        {inv && <span className="muted small">{inv.related_claims.length} connected claim(s)</span>}
+        {inv && (
+          <span className="muted small">
+            {total > (inv.related_claims.length ?? 0) ? `${inv.related_claims.length} of ${total}` : inv.related_claims.length} connected claim(s)
+          </span>
+        )}
       </header>
+      {stats && (
+        <p className="stats-line" title="Wall clock measured in Go around the FalkorDB queries; it varies between runs and is never part of the score">
+          <span className="dot dot-ok" /> Traversal ran inside FalkorDB · {stats.queries} quer{stats.queries === 1 ? "y" : "ies"} · {stats.paths_returned} path
+          {stats.paths_returned === 1 ? "" : "s"} examined · {stats.duration_ms} ms
+        </p>
+      )}
 
-      {inv && inv.related_claims.length === 0 && <p className="muted">{inv.message ?? "No supporting connection was found."}</p>}
+      {outcome && (
+        <div className="outcome" role="status">
+          <strong>{outcome.title}</strong>
+          <p className="muted small">{outcome.body}</p>
+        </div>
+      )}
+      {inv && !inv.outcome && inv.related_claims.length === 0 && <p className="muted">{inv.message ?? "No supporting connection was found."}</p>}
+      {inv?.truncated && <p className="note bad small">A query limit was reached, so some evidence may be missing from this view.</p>}
+      {inv?.paths_trimmed && <p className="muted tiny">Some claims show only example paths; no evidence is lost.</p>}
 
       <div className="ev-list">
         {inv?.related_claims.map((rc) => (
@@ -76,6 +109,20 @@ export default function EvidencePanel({ report, focusClaim, onFocus }: Props) {
           </article>
         ))}
       </div>
+
+      {!!inv?.infrastructure_links?.length && (
+        <div className="block">
+          <h3>Shared infrastructure (counted once, not as connections)</h3>
+          <ul className="plain">
+            {inv.infrastructure_links.map((l) => (
+              <li key={`${l.entity_type}:${l.entity_id}`}>
+                {CATEGORY_LABEL[l.category] ?? l.category} <strong>{l.entity_id}</strong>
+                <span className="muted small"> · used by {l.other_claims.toLocaleString("en-US")} other claims</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {report && report.prior_cases.length > 0 && (
         <div className="block">

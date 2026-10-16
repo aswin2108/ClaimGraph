@@ -1,7 +1,7 @@
 import { vi } from "vitest";
 import type {
   AgentResult, AlgoLink, ClaimDetail, ClaimSummary, Counterfactual, DispositionCase, Factor, FNOLResult, GraphView, Meta, Report, Ring,
-  StrongestLink,
+  RingList, StrongestLink,
 } from "../types";
 
 /** One request that reached the (fake) network. */
@@ -143,6 +143,18 @@ export const strongestLink = (from: string, to: string): StrongestLink => ({
   description: `${from} - PayoutDestination(PAY-01) - CLM-2 - Device(DEV-9) - ${to}`, note: "", duration_ms: 4,
 });
 
+export const ringList = (): RingList => ({
+  algorithm: "algo.WCC", min_size: 3, total_rings: 2, truncated: false, ordering: "indicators first", note: "", duration_ms: 12,
+  rings: [
+    { ring_id: "RING-CLM-1", size: 3, claims: ["CLM-1", "CLM-2", "CLM-7"], filing_span_days: 10, total_amount: 13200, confirmed_fraud_cases: 1,
+      claims_without_recorded_outcome: 2, oversized: false, claimants: 3, addresses: 3, max_claims_in_90_days: 3, claims_on_new_policies: 0,
+      indicators: ["spans_households", "confirmed_case"] },
+    { ring_id: "RING-CLM-40", size: 4, claims: ["CLM-40", "CLM-41", "CLM-42", "CLM-43"], filing_span_days: 300, total_amount: 9000,
+      confirmed_fraud_cases: 0, claims_without_recorded_outcome: 4, oversized: false, claimants: 2, addresses: 1, max_claims_in_90_days: 1,
+      claims_on_new_policies: 0, indicators: [] },
+  ],
+});
+
 // ---------- the fake network ----------
 
 export function installFakeApi(overrides: Record<string, Handler> = {}) {
@@ -161,6 +173,7 @@ export function installFakeApi(overrides: Record<string, Handler> = {}) {
     "POST /api/fnol": (c) => fnolResult(c.body.claim_id),
     "GET /api/claims/:id/ring": (_c, p) => ring(p.id),
     "GET /api/claims/:id/link/:other": (_c, p) => strongestLink(p.id, p.other),
+    "GET /api/rings": () => ringList(),
   };
   const handlers = { ...defaults, ...overrides };
 

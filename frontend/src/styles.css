@@ -371,6 +371,48 @@ p.center {
   justify-content: flex-start;
   margin-top: 2px;
 }
+.ring-alert {
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  background: #f8fafc;
+  border-radius: 12px;
+  padding: 9px 11px;
+  display: grid;
+  gap: 4px;
+}
+.ring-alert.review {
+  border-color: #fcd34d;
+  background: #fffbeb;
+}
+.ring-alert strong {
+  color: var(--ink);
+  font-size: 12.5px;
+}
+.ring-alert p {
+  color: var(--text);
+}
+.ring-alert .link {
+  justify-self: start;
+}
+.q-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+.ring-q {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.ring-q-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
 
 /* ---------- graph ---------- */
 .graph-card {
@@ -890,6 +932,81 @@ p.center {
   padding-left: 18px;
   display: grid;
   gap: 4px;
+}
+
+/* ---------- recommended verifications, traversal stats, outcome ---------- */
+.actions-block {
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.actions-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.actions-head h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
+.actions {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+.actions summary {
+  font-weight: 500;
+  color: var(--ink);
+}
+.a-title {
+  margin-right: 6px;
+}
+.a-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  vertical-align: middle;
+}
+.actions details > p {
+  margin-top: 4px;
+}
+.a-path {
+  display: grid;
+  gap: 2px;
+}
+.a-path small {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.a-path code {
+  font-size: 11px;
+  color: var(--text);
+  word-break: break-word;
+}
+.stats-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  margin: -4px 0 10px;
+}
+.outcome {
+  border: 1px dashed #cbd5e1;
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  background: #fafbff;
+}
+.outcome strong {
+  color: var(--ink);
 }
 
 /* ---------- agent ---------- */

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { AgentResult, Meta } from "../types";
+import type { ActionPlan, AgentResult, Meta } from "../types";
 
 interface Props {
   meta: Meta | null;
@@ -9,6 +9,46 @@ interface Props {
   blocked?: boolean;
   error: string | null;
   onRun: () => void;
+  /** Deterministic verification plan derived from the graph (no model involved). */
+  plan?: ActionPlan | null;
+}
+
+function Actions({ plan }: { plan: ActionPlan }) {
+  return (
+    <div className="actions-block">
+      <div className="actions-head">
+        <h3>Recommended verifications</h3>
+        <span className="chip small-chip" title="Derived deterministically from the graph evidence; the language model is not involved">
+          From the graph
+        </span>
+      </div>
+      <ol className="actions" aria-label="Recommended verifications">
+        {plan.actions.map((a, i) => (
+          <li key={i}>
+            <details>
+              <summary>
+                <span className="a-title">{a.title}</span>
+                <span className="a-badges">
+                  {a.simulated && <span className="chip chip-warn small-chip">Simulated</span>}
+                  {a.requires_human_approval && <span className="chip small-chip">Needs human approval</span>}
+                </span>
+              </summary>
+              <p className="muted small">{a.rationale}</p>
+              {a.evidence_path && (
+                <p className="a-path">
+                  <small>Evidence path</small>
+                  <code>{a.evidence_path}</code>
+                </p>
+              )}
+              {!!a.claims?.length && <p className="muted tiny">Claims: {a.claims.join(", ")}</p>}
+              {!!a.entities?.length && <p className="muted tiny">Identifiers: {a.entities.join(", ")}</p>}
+            </details>
+          </li>
+        ))}
+      </ol>
+      <p className="muted tiny">{plan.note}</p>
+    </div>
+  );
 }
 
 const REASONS: Record<string, string> = {
@@ -24,7 +64,7 @@ const REASONS: Record<string, string> = {
   llm_budget_exhausted: "The hourly or daily model budget is used up.",
 };
 
-export default function NextStepPanel({ meta, result, busy, blocked, error, onRun }: Props) {
+export default function NextStepPanel({ meta, result, busy, blocked, error, onRun, plan }: Props) {
   const [showTrace, setShowTrace] = useState(false);
   const ex = result?.explanation;
   const b = meta?.agent_budget;
@@ -40,10 +80,12 @@ export default function NextStepPanel({ meta, result, busy, blocked, error, onRu
         )}
       </header>
 
+      {plan && plan.actions.length > 0 && <Actions plan={plan} />}
+
       {!result && !busy && (
         <>
           <p className="muted small">
-            The investigation agent reads the graph through six fixed tools, then explains the findings and proposes what to verify next.
+            The investigation agent reads the graph through eight fixed tools, then explains the findings and proposes what to verify next.
             It cannot write queries or decide claims.
           </p>
           <button className="btn btn-primary wide" onClick={onRun} disabled={blocked}>

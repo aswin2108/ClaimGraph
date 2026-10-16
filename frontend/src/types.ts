@@ -74,8 +74,29 @@ export interface Investigation {
   max_hops: number;
   related_claims: RelatedClaim[];
   connected_total?: number; // every connected claim; related_claims lists at most 50
-  truncated: boolean;
+  truncated: boolean; // a limit may have hidden evidence
+  paths_trimmed?: boolean; // only example paths are shown for some claims (no evidence lost)
   message?: string;
+  outcome?: "connected" | "infrastructure_only" | "no_supporting_connection";
+  traversal_stats?: TraversalStats;
+  infrastructure_links?: InfrastructureLink[];
+}
+export interface TraversalStats {
+  engine: string;
+  queries: number;
+  paths_returned: number;
+  duration_ms: number;
+}
+export interface InfrastructureLink {
+  category: string;
+  entity_type: string;
+  entity_id: string;
+  entity_subtype?: string;
+  entity_public?: boolean;
+  rel: string;
+  other_claims: number;
+  evidence_id?: string;
+  recorded_at?: string;
 }
 export interface Factor {
   name: string;
@@ -104,6 +125,33 @@ export interface Report {
   excluded_category?: string;
   investigation: Investigation;
   disclaimer: string;
+  recommended_actions?: ActionPlan; // only on GET /investigation, not on counterfactual reports
+  ring_alert?: RingAlert;
+}
+export interface RecommendedAction {
+  kind: string;
+  priority: number;
+  title: string;
+  rationale: string;
+  claims?: string[];
+  entities?: string[];
+  evidence_path?: string;
+  simulated?: boolean;
+  requires_human_approval: boolean;
+}
+export interface ActionPlan {
+  target_claim: string;
+  actions: RecommendedAction[];
+  note: string;
+}
+export interface RingAlert {
+  claim_id: string;
+  ring_id: string;
+  size: number;
+  confirmed_fraud_cases: number;
+  traits: RingTraits;
+  level: "review_recommended" | "context";
+  message: string;
 }
 export interface FactorChange {
   name: string;
@@ -198,6 +246,7 @@ export interface FNOLResult {
   created: boolean;
   policy_checks: { name: string; passed: boolean }[];
   policy_check_status: string;
+  ring_alert?: RingAlert;
 }
 
 export interface FNOL {
@@ -291,6 +340,28 @@ export interface StrongestLink {
   links: AlgoLink[] | null;
   evidence_used?: string[];
   description: string;
+  note: string;
+  duration_ms: number;
+}
+export interface RingSummary extends RingTraits {
+  ring_id: string;
+  size: number;
+  claims: string[]; // up to 10 members, sorted
+  first_filed?: string;
+  last_filed?: string;
+  filing_span_days: number;
+  total_amount: number;
+  confirmed_fraud_cases: number;
+  claims_without_recorded_outcome: number;
+  oversized: boolean;
+}
+export interface RingList {
+  algorithm: string;
+  min_size: number;
+  total_rings: number;
+  truncated: boolean;
+  rings: RingSummary[];
+  ordering: string;
   note: string;
   duration_ms: number;
 }

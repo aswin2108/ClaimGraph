@@ -37,6 +37,8 @@ export const FACTOR_LABEL: Record<string, string> = {
   temporal_proximity: "Filed within 7 days",
   confirmed_fraud_history: "Confirmed outcome on a related claim",
   multi_signal_reinforcement: "Independent signals reinforce each other",
+  claim_burst: "Linked claims filed in a burst (90 days)",
+  new_policy_cluster: "Linked claims on new policies",
 };
 
 export const ENTITY_LABEL: Record<string, string> = {
@@ -79,4 +81,11 @@ export const RING_INDICATOR_LABEL: Record<string, string> = {
   filing_burst: "Filing burst",
   new_policies: "New policies",
   confirmed_case: "Confirmed case on a member",
+};
+
+export const RING_INDICATOR_SHORT: Record<string, string> = {
+  spans_households: "Households",
+  filing_burst: "Burst",
+  new_policies: "New policies",
+  confirmed_case: "Confirmed",
 };

@@ -115,11 +115,11 @@ async function main() {
   const posts = (rs, part) => rs.filter((r) => r.method === "POST" && r.path.includes(part));
 
   const text = (sel) => page.$eval(sel, (e) => e.textContent ?? "");
-  const waitFor = async (fn, what, ms = 10000) => {
+  const waitFor = async (fn, what, ms = 10000, ...args) => {
     const end = Date.now() + ms;
     while (Date.now() < end) {
       try {
-        if (await page.evaluate(fn)) return true;
+        if (await page.evaluate(fn, ...args)) return true;
       } catch {}
       await sleep(100);
     }
@@ -151,6 +151,13 @@ async function main() {
   const graphApi = await api("GET", `/api/claims/${T}/graph?hops=3`);
   check("every node in the API graph is drawn by Cytoscape", eq((await cyInfo()).ids, graphApi.nodes.map((n) => n.id).sort()));
   check("evidence panel lists every connected claim", (await page.$$eval(".ev-item", (e) => e.length)) === baseline.connected_claims);
+  check("the API ran the traversal inside FalkorDB", baseline.investigation.traversal_stats?.engine === "falkordb_in_database");
+  check("the UI shows the FalkorDB timing line", (await text(".stats-line")).includes("Traversal ran inside FalkorDB") && /\d+ ms/.test(await text(".stats-line")));
+  const planApi = baseline.recommended_actions?.actions ?? [];
+  check("recommended verifications are shown without the agent, one per API action",
+    planApi.length > 0 && (await page.$$eval('[aria-label="Recommended verifications"] > li', (e) => e.length)) === planApi.length && posts(reqs, "/agent").length === 0,
+    `api=${planApi.length}`);
+  check("every recommended action needs human approval", planApi.every((a) => a.requires_human_approval));
 
   console.log("\nReplay traversal (client side only)");
   let m = mark();
@@ -218,6 +225,28 @@ async function main() {
   const lit = await page.evaluate(() => window.__ringCy.elements(".onpath").length);
   check("the chain is highlighted on the graph", lit === linkApi.links.length * 2 + 1, `lit=${lit} links=${linkApi.links.length}`);
   check("the ring view never calls the agent", posts(since(m), "/agent").length === 0);
+
+  console.log("\nRing queue (book-wide algo.WCC in review order)");
+  const listApi = await api("GET", "/api/rings?min_size=3&limit=20");
+  m = mark();
+  await click("Rings");
+  await waitFor(() => document.querySelectorAll('[aria-label="Ring queue"] .q-item').length > 0, "ring list");
+  const shownRings = await page.$$eval('[aria-label="Ring queue"] .q-item strong', (e) => e.map((x) => x.textContent));
+  check("the ring list matches the API, in the same order", eq(shownRings, listApi.rings.map((r) => r.ring_id)), `ui=${shownRings}`);
+  check("opening the tab sends exactly one /api/rings request", since(m).filter((r) => r.path === "/api/rings").length === 1);
+  check("the ring of the selected claim is marked", await page.$eval('[aria-label="Ring queue"] .q-item.on strong', (e) => e.textContent) === ringApi.ring_id);
+  m = mark();
+  await page.evaluate(() => document.querySelector('[aria-label="Ring queue"] .q-item').click());
+  const opened = listApi.rings[0].ring_id.replace(/^RING-/, "");
+  await waitFor((o) => document.querySelector(".claim-strip")?.textContent.includes(o), "ring opened", 10000, opened);
+  await sleep(800);
+  check("clicking a ring opens its member claim", (await text(".claim-strip")).includes(opened));
+  check("...in the ring view", !!(await page.$(".ring-stats")));
+  check("opening a ring never calls the agent", posts(since(m), "/agent").length === 0);
+  await page.evaluate(() => [...document.querySelectorAll('[role="tab"]')].find((b) => b.textContent.startsWith("Claims")).click());
+  await page.evaluate((t) => [...document.querySelectorAll(".q-item")].find((b) => b.textContent.includes(t)).click(), T);
+  await waitFor((t) => document.querySelector(".claim-strip")?.textContent.includes(t), "reselect target", 10000, T);
+  await sleep(500);
   await click("Traversal ≤ 3 hops");
   await waitFor(() => document.querySelector(".select select") && window.__cy && !window.__cy.destroyed(), "back to traversal");
   await sleep(500);
@@ -287,6 +316,7 @@ async function main() {
   check("it is connected to the seeded ring by real graph queries", newInv.connected_claims >= 3 && newInv.factors.some((f) => f.name === "shared_claimant_payout"), `connected=${newInv.connected_claims}`);
   check("the UI score equals the API score for the new claim", (await score()) === newInv.score);
   check("the success message reports the real policy checks", (await text(".card .note.ok")).includes("policy checks passed"));
+  check("it joins the seeded ring, and the intake shows the ring alert", !!newInv.ring_alert && (await text(".ring-alert")).includes(newInv.ring_alert.ring_id));
   m = mark();
   await click("Isolated claim");
   await click("Submit synthetic FNOL");
@@ -294,6 +324,8 @@ async function main() {
   await waitFor(() => document.querySelector(".g-score"), "isolated");
   check("an isolated claim shows no connections and no invented evidence", (await text(".evidence")).includes("No supporting connection") || (await text(".evidence")).includes("No connected") || (await page.$$eval(".ev-item", (e) => e.length)) === 0);
   check("an isolated claim scores 0", (await score()) === 0);
+  check("an isolated claim states the explicit 'no supporting connection' outcome", (await text(".outcome")).includes("No supporting connection found in the graph"));
+  check("an isolated claim shows no ring alert", !(await page.$(".ring-alert")));
 
   console.log("\nPage health");
   check("no console errors or uncaught exceptions", problems.length === 0, problems.join(" | "));

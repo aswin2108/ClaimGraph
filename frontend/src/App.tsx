@@ -39,6 +39,7 @@ export default function App() {
   const [ring, setRing] = useState<Ring | null>(null);
   const [ringErr, setRingErr] = useState<string | null>(null);
   const [ringBusy, setRingBusy] = useState(false);
+  const [ringsVersion, setRingsVersion] = useState(0); // new claims or outcomes can change the book-wide ring list
 
   const [dispBusy, setDispBusy] = useState(false);
   const [dispMsg, setDispMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -172,6 +173,7 @@ export default function App() {
       });
       refreshQueue();
       loadRing(selected, false); // the ring's recorded cases changed
+      setRingsVersion((v) => v + 1);
       return true;
     } catch (e) {
       setDispMsg({ ok: false, text: msg(e) });
@@ -224,7 +226,14 @@ export default function App() {
           claims={queue}
           selected={selected}
           onSelect={setSelected}
+          ringsVersion={ringsVersion}
+          activeRingId={ring?.ring_id}
+          onOpenRing={(id) => {
+            setSelected(id);
+            setView("ring");
+          }}
           onSubmitted={async (id) => {
+            setRingsVersion((v) => v + 1);
             await refreshQueue();
             setSelected(id);
           }}
@@ -271,6 +280,7 @@ export default function App() {
             blocked={agentBusyFor !== null && agentBusyFor !== selected}
             error={agentErr}
             onRun={runAgent}
+            plan={report?.recommended_actions}
           />
           <DispositionPanel
             claimId={selected}
