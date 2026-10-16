@@ -4,6 +4,7 @@ import type { AlgoLink, AlgoNode, Investigation, Ring, StrongestLink } from "../
 import { ALGO_CATEGORY, CATEGORY_COLOR, DISPOSITION_LABEL, ENTITY_LABEL, money, RING_INDICATOR_LABEL } from "../ui";
 import RingGraph from "./RingGraph";
 import ViewTabs, { type GraphViewMode } from "./ViewTabs";
+import CypherView from "./CypherView";
 
 interface Props {
   ring: Ring | null;
@@ -204,6 +205,10 @@ export default function RingPanel({ ring, error, busy, traversal, hops, onView }
                   {link.found && link.links?.length ? <LinkTrail links={link.links} /> : <p className="muted small">{link.description}</p>}
                 </>
               )}
+              <CypherView
+                queries={[...(ring.cypher_queries ?? []), ...(link?.cypher_query ? [link.cypher_query] : [])]}
+                what={link ? "this ring and its strongest link" : "this ring"}
+              />
             </div>
 
             <div className="ring-cols">

@@ -47,6 +47,10 @@ export const report = (id: string, score: number, band: string, factors: Factor[
   disclaimer: meta.disclaimer,
   investigation: {
     target_claim: id, max_hops: 3, truncated: false,
+    cypher_queries: [
+      { purpose: "Load the target claim", cypher: "MATCH (c:Claim {claim_id:$claim_id})\nRETURN c.claim_id AS claim_id", params: { claim_id: id }, results: 1, duration_ms: 1 },
+      { purpose: "Hop 1: claims sharing an identifier with the target", cypher: "MATCH (x0:Claim {claim_id:$id})-[a:PAID_TO]->(e0)", params: { id }, results: 1, duration_ms: 4 },
+    ],
     related_claims: related.map((r) => ({
       claim_id: r, hops: 1, filing_date: "2026-09-07",
       paths: [{ hops: 1, description: `${id} -[PAID_TO]-> PayoutDestination(PAY-01) <-[PAID_TO]- ${r}`, steps: [{
@@ -110,6 +114,10 @@ const algoLink = (fromType: string, from: string, rel: string, toType: string, t
 /** CLM-1's ring: CLM-2 shares its payout account (1 hop); CLM-7 is reached only through CLM-2's device. */
 export const ring = (id: string): Ring => ({
   ring_id: "RING-CLM-1", target_claim: id, algorithm: "algo.WCC + algo.MSF", size: 3, oversized: false,
+  cypher_queries: [
+    { purpose: "Ring membership: algo.WCC over the strong-evidence subgraph", cypher: "CALL algo.WCC({nodeLabels: $labels, relationshipTypes: $rels}) YIELD node, componentId",
+      params: { labels: ["Claim", "Claimant"], rels: ["PAID_TO"] }, results: 3, duration_ms: 0, cached: true },
+  ],
   members: [
     { claim_id: "CLM-1", filing_date: "2026-09-09", amount: 4200 },
     { claim_id: "CLM-2", filing_date: "2026-09-07", amount: 3900, recorded_dispositions: ["confirmed_fraud"] },

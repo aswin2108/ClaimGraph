@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"claimgraph/internal/graph"
 	"claimgraph/internal/ingest"
 
 	"github.com/FalkorDB/falkordb-go/v2"
@@ -97,6 +98,9 @@ type Result struct {
 	// empty list to interpret: connected | infrastructure_only | no_supporting_connection.
 	Outcome string          `json:"outcome"`
 	Stats   *TraversalStats `json:"traversal_stats,omitempty"` // how the answer was computed (S2)
+	// Queries are the Cypher queries this traversal sent to FalkorDB, exactly as sent (template +
+	// parameters), for the UI's "Show Cypher". The agent's tools never pass them to the model.
+	Queries []graph.ExecutedQuery `json:"cypher_queries,omitempty"`
 	// Infrastructure the target uses (see InfrastructureMinClaims): reported with exact
 	// counts instead of one related claim per user. Nil when there is none.
 	InfrastructureLinks []InfrastructureLink `json:"infrastructure_links,omitempty"`
@@ -208,13 +212,15 @@ func FindRelatedClaimsExcluding(g *falkordb.Graph, claimID string, maxHops int, 
 
 	res := &Result{TargetClaim: claimID, TargetFilingDate: targetFiled, ExcludedCategory: excludeCategory,
 		MaxHops: maxHops, RelatedClaims: []RelatedClaim{}}
+	res.Queries = append(res.Queries, graph.Record("Load the target claim", cypherTargetClaim,
+		map[string]any{"claim_id": claimID}, 1, start))
 
-	chains, info, cut, err := discover(g, claimID, maxHops, excludeCategory)
+	chains, info, cut, err := discover(g, claimID, maxHops, excludeCategory, &res.Queries)
 	if err != nil {
 		return nil, err
 	}
 	res.Truncated = cut
-	if res.InfrastructureLinks, err = infrastructure(g, claimID, excludeCategory); err != nil {
+	if res.InfrastructureLinks, err = infrastructure(g, claimID, excludeCategory, &res.Queries); err != nil {
 		return nil, err
 	}
 	queries := 3 // target lookup + infrastructure summary + single-transition paths

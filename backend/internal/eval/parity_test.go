@@ -19,7 +19,8 @@ import (
 func normalized(t *testing.T, r *investigate.Result) string {
 	t.Helper()
 	c := *r
-	c.Stats = nil // timing differs between runs and engines
+	c.Stats = nil   // timing differs between runs and engines
+	c.Queries = nil // only the production engine logs its Cypher (for "Show Cypher")
 	c.RelatedClaims = append([]investigate.RelatedClaim(nil), r.RelatedClaims...)
 	sort.Slice(c.RelatedClaims, func(i, j int) bool {
 		a, b := c.RelatedClaims[i], c.RelatedClaims[j]

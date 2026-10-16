@@ -164,7 +164,7 @@ func FindRelatedClaimsReference(g *falkordb.Graph, claimID string, maxHops int, 
 	}
 	// The identifier summary (context-only identifiers, infrastructure) is one independent
 	// query, not traversal logic, so both engines report it with the same function.
-	links, err := infrastructure(g, claimID, excludeCategory)
+	links, err := infrastructure(g, claimID, excludeCategory, nil)
 	if err != nil {
 		return nil, err
 	}

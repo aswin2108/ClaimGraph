@@ -436,6 +436,7 @@ func ringJSON(t *testing.T, r *Ring) string {
 	t.Helper()
 	c := *r
 	c.DurationMs, c.Cached = 0, false
+	c.Queries = nil // the query log differs by design: a cached entry vs the per-claim query
 	b, _ := json.Marshal(c)
 	return string(b)
 }

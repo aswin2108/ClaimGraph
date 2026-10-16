@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"claimgraph/internal/graph"
 	"claimgraph/internal/ingest"
 
 	"github.com/FalkorDB/falkordb-go/v2"
@@ -41,6 +42,8 @@ type StrongestLink struct {
 	Description string   `json:"description"`
 	Note        string   `json:"note"`
 	DurationMs  int64    `json:"duration_ms"`
+	// Query is the algo.SPpaths call as sent to FalkorDB, for the UI's "Show Cypher".
+	Query *graph.ExecutedQuery `json:"cypher_query,omitempty"`
 }
 
 const linkNote = "Only strong evidence is used (claimant payout account, private device, phone/email, address, same claimant); repair shops, IP addresses and context-only identifiers are not. Stronger evidence costs less: payout 4, device 5, contact 8, address 10 per relationship; the same claimant costs 0. A link explains how claims connect; it is not proof of wrongdoing."
@@ -71,12 +74,20 @@ func FindStrongestLink(g *falkordb.Graph, from, to string) (*StrongestLink, erro
 	found := false
 	var r *falkordb.QueryResult
 	if len(sc.rels) > 0 {
-		r, err = roQuery(g, cypherStrongestLink, map[string]any{"from": from, "to": to, "rels": sc.rels,
-			"max_cost": ingest.MaxStrongPathCost, "max_len": MaxLinkEdges})
+		t0 := time.Now()
+		params := map[string]any{"from": from, "to": to, "rels": sc.rels,
+			"max_cost": ingest.MaxStrongPathCost, "max_len": MaxLinkEdges}
+		r, err = roQuery(g, cypherStrongestLink, params)
 		if err != nil {
 			return nil, err
 		}
 		found = r.Next()
+		results := 0
+		if found {
+			results = 1
+		}
+		q := graph.Record("Strongest evidence chain: algo.SPpaths, lowest total evidence cost w, both directions", cypherStrongestLink, params, results, t0)
+		out.Query = &q
 	}
 	if !found {
 		out.Description = "No chain of strong evidence connects these claims (weak links such as a shared repair shop are not used here)."

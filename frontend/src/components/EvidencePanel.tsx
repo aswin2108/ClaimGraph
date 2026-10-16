@@ -1,5 +1,6 @@
 import type { GraphStats, Path, Report, Step } from "../types";
 import { CATEGORY_COLOR, CATEGORY_LABEL, DISPOSITION_LABEL, ENTITY_LABEL } from "../ui";
+import CypherView from "./CypherView";
 
 interface Props {
   report: Report | null;
@@ -88,6 +89,7 @@ export default function EvidencePanel({ report, focusClaim, onFocus, graphSize }
           {stats.paths_returned === 1 ? "" : "s"} examined · {stats.duration_ms} ms
         </p>
       )}
+      {inv?.cypher_queries && <CypherView queries={inv.cypher_queries} what="this traversal" />}
 
       {outcome && (
         <div className="outcome" role="status">

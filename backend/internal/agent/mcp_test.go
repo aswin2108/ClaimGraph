@@ -3,6 +3,7 @@ package agent
 import (
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -89,5 +90,22 @@ func TestDecisionOverMCPAndNoChannelWithoutModel(t *testing.T) {
 	e2.a.Provider = nil
 	if r2 := e2.run(nil); r2.Tools != nil || r2.Source != SourceFallback {
 		t.Fatalf("no model, no tool channel: %+v %s", r2.Tools, r2.Source)
+	}
+}
+
+// The query log behind "Show Cypher" is for the investigator's UI only: no tool result the
+// model receives carries Cypher text.
+func TestModelNeverReceivesCypher(t *testing.T) {
+	e := newEnv(t, "claimgraph_test_agent_nocypher", steps(investigationCalls, say(goodAnswer))...)
+	r := e.run(nil)
+	if r.Report.Investigation == nil || len(r.Report.Investigation.Queries) == 0 {
+		t.Fatal("the report should carry its query log for the UI")
+	}
+	for _, res := range e.fp.received {
+		for _, marker := range []string{"cypher_queries", "cypher_query", "MATCH ("} {
+			if strings.Contains(res.Content, marker) {
+				t.Fatalf("tool result sent to the model contains %q: %.200s", marker, res.Content)
+			}
+		}
 	}
 }

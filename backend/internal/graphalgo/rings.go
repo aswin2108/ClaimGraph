@@ -31,6 +31,7 @@ import (
 	"strings"
 	"time"
 
+	"claimgraph/internal/graph"
 	"claimgraph/internal/ingest"
 
 	"github.com/FalkorDB/falkordb-go/v2"
@@ -229,6 +230,9 @@ type Ring struct {
 	Cached              bool         `json:"algorithm_results_cached"` // WCC/MSF reused for this evidence version
 	Traits              RingTraits   `json:"traits"`                   // indicators that separate rings from households
 	DurationMs          int64        `json:"duration_ms"`
+	// Queries are the Cypher queries behind this ring, as sent to FalkorDB (or the cached
+	// whole-book algorithm run the answer came from), for the UI's "Show Cypher".
+	Queries []graph.ExecutedQuery `json:"cypher_queries,omitempty"`
 }
 
 // RingOf returns the ring (strong-evidence connected component) that contains claimID.
@@ -267,9 +271,16 @@ func ringOf(g *falkordb.Graph, claimID string, full bool) (*Ring, error) {
 				return nil, err
 			}
 			ring.Cached = cachedOK
+			if cachedOK {
+				ring.Queries = append(ring.Queries, graph.ExecutedQuery{Cached: true, Results: len(members),
+					Purpose: "Ring membership: algo.WCC over the strong-evidence subgraph of the whole book (run once per evidence version; this ring came from that cached run)",
+					Cypher:  graph.Tidy(cypherAllComponents), Params: sc.params(map[string]any{})})
+			}
 		}
 		if !cachedOK {
-			r, err := roQuery(g, cypherRingMembers, sc.params(map[string]any{"id": claimID}))
+			t0 := time.Now()
+			params := sc.params(map[string]any{"id": claimID})
+			r, err := roQuery(g, cypherRingMembers, params)
 			if err != nil {
 				return nil, err
 			}
@@ -277,6 +288,7 @@ func ringOf(g *falkordb.Graph, claimID string, full bool) (*Ring, error) {
 				v, _ := r.Record().Get("claims")
 				members = strings_(v)
 			}
+			ring.Queries = append(ring.Queries, graph.Record("Ring membership: algo.WCC, the component that contains this claim", cypherRingMembers, params, len(members), t0))
 		}
 	}
 	if len(members) == 0 {
@@ -312,6 +324,9 @@ func ringOf(g *falkordb.Graph, claimID string, full bool) (*Ring, error) {
 			if ok {
 				ring.setBackbone(links)
 				done = true
+				ring.Queries = append(ring.Queries, graph.ExecutedQuery{Cached: true, Results: len(links),
+					Purpose: "Ring backbone: algo.MSF (minimum spanning forest by evidence cost w) over the whole book, cached per evidence version",
+					Cypher:  graph.Tidy(cypherAllBackbones), Params: sc.params(map[string]any{})})
 			}
 		}
 		if !done {
@@ -325,10 +340,15 @@ func ringOf(g *falkordb.Graph, claimID string, full bool) (*Ring, error) {
 }
 
 func (ring *Ring) loadFacts(g *falkordb.Graph, members []string) error {
-	r, err := roQuery(g, cypherClaimFacts, map[string]any{"claims": anyList(members)})
+	t0 := time.Now()
+	params := map[string]any{"claims": anyList(members)}
+	r, err := roQuery(g, cypherClaimFacts, params)
 	if err != nil {
 		return err
 	}
+	defer func() {
+		ring.Queries = append(ring.Queries, graph.Record("Facts of the member claims (dates, amounts, claimants, addresses, policies, recorded outcomes)", cypherClaimFacts, params, len(ring.Members), t0))
+	}()
 	var all []RingClaim
 	var filed []string
 	claimants, addresses := map[string]bool{}, map[string]bool{}
@@ -376,10 +396,15 @@ func (ring *Ring) loadFacts(g *falkordb.Graph, members []string) error {
 }
 
 func (ring *Ring) loadEntities(g *falkordb.Graph, members []string) error {
-	r, err := roQuery(g, cypherSharedEntities, map[string]any{"claims": anyList(members)})
+	t0 := time.Now()
+	params := map[string]any{"claims": anyList(members)}
+	r, err := roQuery(g, cypherSharedEntities, params)
 	if err != nil {
 		return err
 	}
+	defer func() {
+		ring.Queries = append(ring.Queries, graph.Record("Identifiers shared by two or more members", cypherSharedEntities, params, len(ring.SharedEntities), t0))
+	}()
 	for r.Next() {
 		rec := r.Record()
 		ring.SharedEntities = append(ring.SharedEntities, RingEntity{Type: str(get(rec, "type")), ID: str(get(rec, "id")),
@@ -407,10 +432,15 @@ func (ring *Ring) loadEntities(g *falkordb.Graph, members []string) error {
 }
 
 func (ring *Ring) loadBackbone(g *falkordb.Graph, claimID string, sc schema) error {
-	r, err := roQuery(g, cypherBackbone, sc.params(map[string]any{"id": claimID}))
+	t0 := time.Now()
+	params := sc.params(map[string]any{"id": claimID})
+	r, err := roQuery(g, cypherBackbone, params)
 	if err != nil {
 		return err
 	}
+	defer func() {
+		ring.Queries = append(ring.Queries, graph.Record("Ring backbone: algo.MSF, minimum spanning tree by evidence cost w", cypherBackbone, params, len(ring.Backbone), t0))
+	}()
 	if !r.Next() {
 		return nil
 	}

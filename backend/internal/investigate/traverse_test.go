@@ -43,7 +43,8 @@ func claimHops(r *Result) string {
 func normalize(t *testing.T, r *Result) string {
 	t.Helper()
 	c := *r
-	c.Stats = nil // timing differs between runs and engines
+	c.Stats = nil   // timing differs between runs and engines
+	c.Queries = nil // only the production engine logs its Cypher (for "Show Cypher")
 	c.RelatedClaims = append([]RelatedClaim(nil), r.RelatedClaims...)
 	sort.Slice(c.RelatedClaims, func(i, j int) bool {
 		a, b := c.RelatedClaims[i], c.RelatedClaims[j]

@@ -31,7 +31,9 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
+	"claimgraph/internal/graph"
 	"claimgraph/internal/ingest"
 
 	"github.com/FalkorDB/falkordb-go/v2"
@@ -445,8 +447,9 @@ func entityOf(n *falkordb.Node) (typ, id, subtype string, public *bool) {
 	return typ, id, subtype, public
 }
 
-// discover returns every path of 1..maxHops transitions that starts at claimID.
-func discover(g *falkordb.Graph, claimID string, maxHops int, exclude string) (chains [][]Step, info map[string]claimInfo, cut bool, err error) {
+// discover returns every path of 1..maxHops transitions that starts at claimID. Each query
+// it sends is appended to log (when not nil).
+func discover(g *falkordb.Graph, claimID string, maxHops int, exclude string, log *[]graph.ExecutedQuery) (chains [][]Step, info map[string]claimInfo, cut bool, err error) {
 	rs := relSetsFor(exclude)
 	info = map[string]claimInfo{}
 	merge := func(c [][]Step, i map[string]claimInfo, k bool) {
@@ -456,23 +459,46 @@ func discover(g *falkordb.Graph, claimID string, maxHops int, exclude string) (c
 		}
 		cut = cut || k
 	}
-	c, i, k, err := run(g, directQuery(rs), map[string]any{"id": claimID}, directRowLimit)
+	// params maps are logged after the query ran: runWithin adds the limits to them, so the
+	// log shows every parameter that was actually sent.
+	note := func(purpose, q string, params map[string]any, results int, t0 time.Time, timedOut bool) {
+		if log != nil {
+			e := graph.Record(purpose, q, params, results, t0)
+			e.TimedOut = timedOut
+			*log = append(*log, e)
+		}
+	}
+	t0 := time.Now()
+	q := directQuery(rs)
+	p := map[string]any{"id": claimID}
+	c, i, k, err := run(g, q, p, directRowLimit)
 	if err != nil {
 		return nil, nil, false, err
 	}
+	note("Hop 1: claims sharing an identifier with the target (one branch per relationship type)", q, p, len(c), t0, false)
 	merge(c, i, k)
 	if maxHops >= 2 {
 		// Aggregated first: complete claim set, one row per reached claim. If FalkorDB
 		// cannot finish that within the time limit (an unusually dense neighbourhood), fall
 		// back to row-limited path enumeration and report the result as truncated.
-		c, i, k, err = runWithin(g, deepQuery(rs, 2, maxHops, false, outAggregated), map[string]any{"id": claimID}, deepRowLimit, aggregatedTimeoutMs)
+		t0 = time.Now()
+		q = deepQuery(rs, 2, maxHops, false, outAggregated)
+		p = map[string]any{"id": claimID}
+		c, i, k, err = runWithin(g, q, p, deepRowLimit, aggregatedTimeoutMs)
+		purpose := fmt.Sprintf("Hops 2-%d: every legal path shape, aggregated per reached claim inside FalkorDB", maxHops)
 		if errors.Is(err, ErrTraversalTimeout) {
-			c, i, _, err = run(g, deepQuery(rs, 2, maxHops, false, outPaths), map[string]any{"id": claimID}, deepRowLimit)
+			note(purpose, q, p, 0, t0, true)
+			t0 = time.Now()
+			q = deepQuery(rs, 2, maxHops, false, outPaths)
+			p = map[string]any{"id": claimID}
+			c, i, _, err = run(g, q, p, deepRowLimit)
 			k = true
+			purpose = fmt.Sprintf("Hops 2-%d (fallback after the time limit): row-limited paths", maxHops)
 		}
 		if err != nil {
 			return nil, nil, false, err
 		}
+		note(purpose, q, p, len(c), t0, false)
 		merge(c, i, k)
 	}
 	return chains, info, cut, nil
@@ -485,11 +511,13 @@ const cypherInfrastructure = `
 	WHERE type(a) IN %s AND (indegree(e) > $infra OR (coalesce(a.w, %d) >= %d AND indegree(e) > 1)) AND coalesce(a.w, %d) > %d
 	RETURN e AS entity, type(a) AS rel, indegree(e) AS users, a.evidence_id AS evidence, a.recorded_at AS at`
 
-// infrastructure summarizes the shared infrastructure the target uses.
-func infrastructure(g *falkordb.Graph, claimID, exclude string) ([]InfrastructureLink, error) {
+// infrastructure summarizes the shared infrastructure the target uses. The query is
+// appended to log (when not nil).
+func infrastructure(g *falkordb.Graph, claimID, exclude string, log *[]graph.ExecutedQuery) ([]InfrastructureLink, error) {
 	q := fmt.Sprintf(cypherInfrastructure, typeList(relSetsFor(exclude).claim), ingest.CostContext, ingest.CostContext, ingest.CostContext, ingest.CostAddress)
-	r, err := g.ROQuery(q, map[string]any{"id": claimID, "infra": InfrastructureMinClaims},
-		falkordb.NewQueryOptions().SetTimeout(queryTimeoutMs))
+	params := map[string]any{"id": claimID, "infra": InfrastructureMinClaims}
+	t0 := time.Now()
+	r, err := g.ROQuery(q, params, falkordb.NewQueryOptions().SetTimeout(queryTimeoutMs))
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "timed out") {
 			return nil, ErrTraversalTimeout
@@ -524,6 +552,9 @@ func infrastructure(g *falkordb.Graph, claimID, exclude string) ([]Infrastructur
 		}
 		return out[i].EntityID < out[j].EntityID
 	})
+	if log != nil {
+		*log = append(*log, graph.Record("Shared infrastructure and context identifiers, with exact usage counts", q, params, len(out), t0))
+	}
 	return out, nil
 }
 

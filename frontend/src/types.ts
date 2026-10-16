@@ -116,6 +116,18 @@ export interface Investigation {
   outcome?: "connected" | "infrastructure_only" | "no_supporting_connection";
   traversal_stats?: TraversalStats;
   infrastructure_links?: InfrastructureLink[];
+  /** The Cypher this traversal sent to FalkorDB, as sent ("Show Cypher"). */
+  cypher_queries?: ExecutedQuery[];
+}
+/** One query as sent to FalkorDB: the fixed template plus its bound parameters. */
+export interface ExecutedQuery {
+  purpose: string;
+  cypher: string;
+  params?: Record<string, unknown>;
+  results: number;
+  duration_ms: number;
+  cached?: boolean;
+  timed_out?: boolean;
 }
 export interface TraversalStats {
   engine: string;
@@ -377,6 +389,7 @@ export interface Ring {
   algorithm_results_cached: boolean;
   traits: RingTraits;
   duration_ms: number;
+  cypher_queries?: ExecutedQuery[];
 }
 export interface StrongestLink {
   from_claim: string;
@@ -390,6 +403,7 @@ export interface StrongestLink {
   description: string;
   note: string;
   duration_ms: number;
+  cypher_query?: ExecutedQuery;
 }
 export interface RingSummary extends RingTraits {
   ring_id: string;

@@ -159,6 +159,17 @@ async function main() {
   check("evidence panel lists every connected claim", (await page.$$eval(".ev-item", (e) => e.length)) === baseline.connected_claims);
   check("the API ran the traversal inside FalkorDB", baseline.investigation.traversal_stats?.engine === "falkordb_in_database");
   check("the UI shows the FalkorDB timing line", (await text(".stats-line")).includes("Traversal ran inside FalkorDB") && /\d+ ms/.test(await text(".stats-line")));
+  {
+    const logged = baseline.investigation.cypher_queries ?? [];
+    check("the API logs every query the traversal sent, one per counted query", logged.length === baseline.investigation.traversal_stats?.queries && logged.length >= 3);
+    check("no logged query has the claim id pasted into its text", logged.every((q) => !q.cypher.includes(T) && Object.values(q.params ?? {}).includes(T)));
+    const m = mark();
+    await page.evaluate(() => [...document.querySelectorAll(".evidence button")].find((b) => b.textContent.startsWith("Show Cypher")).click());
+    await waitFor(() => document.querySelector('[aria-label="Cypher behind this traversal"] pre.cypher'), "cypher shown");
+    check("Show Cypher displays the real queries without a new request",
+      (await text('[aria-label="Cypher behind this traversal"]')).includes("MATCH (x0:Claim {claim_id:$id})") && since(m).length === 0);
+    await click("Hide Cypher");
+  }
   const planApi = baseline.recommended_actions?.actions ?? [];
   check("recommended verifications are shown without the agent, one per API action",
     planApi.length > 0 && (await page.$$eval('[aria-label="Recommended verifications"] > li', (e) => e.length)) === planApi.length && posts(reqs, "/agent").length === 0,
