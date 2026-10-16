@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ActionPlan, AgentResult, Meta } from "../types";
+import Hint from "./Hint";
 
 interface Props {
   meta: Meta | null;
@@ -62,7 +63,11 @@ const REASONS: Record<string, string> = {
   turn_limit_reached: "The model used its full turn budget.",
   run_token_limit_reached: "The run reached its token limit.",
   llm_budget_exhausted: "The hourly or daily model budget is used up.",
+  tool_channel_error: "The connection to the MCP tool server failed.",
 };
+
+const MCP_HINT =
+  "MCP (Model Context Protocol) is the standard way AI agents find and call tools. This agent does not have its tools built in: each run connects to the ClaimGraph MCP server, asks it which tools exist (tools/list) and sends every call through it (tools/call). The server checks each call (allowed tools, scope, limits) before it touches FalkorDB. Claude Code, Claude Desktop or Cursor can connect to the same tools with cmd/mcp.";
 
 export default function NextStepPanel({ meta, result, busy, blocked, error, onRun, plan }: Props) {
   const [showTrace, setShowTrace] = useState(false);
@@ -131,6 +136,13 @@ export default function NextStepPanel({ meta, result, busy, blocked, error, onRu
           )}
           {result?.source !== "llm" && result?.fallback_reason && (
             <p className="muted tiny">{REASONS[result.fallback_reason] ?? result.fallback_reason} Showing the deterministic explanation built directly from graph evidence.</p>
+          )}
+          {result?.tool_channel && (
+            <p className="small mcp-line" data-testid="mcp-line">
+              <span className="chip chip-ai small-chip">MCP</span> The agent found {result.tool_channel.discovered.length} tools on the{" "}
+              <code>{result.tool_channel.server}</code> MCP server (tools/list) and sent {result.tool_channel.calls}{" "}
+              {result.tool_channel.calls === 1 ? "call" : "calls"} through it (tools/call). <Hint text={MCP_HINT} />
+            </p>
           )}
           {result && (
             <>

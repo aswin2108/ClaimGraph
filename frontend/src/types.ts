@@ -249,6 +249,16 @@ export interface AgentResult {
   model?: string;
   tool_trace: TraceEntry[];
   usage: { turns: number; tool_calls: number; input_tokens: number; output_tokens: number };
+  /** How the model reached its tools: MCP tools/list + tools/call. Absent when the model was not called. */
+  tool_channel?: ToolChannel;
+}
+export interface ToolChannel {
+  protocol: string;
+  server: string;
+  version: string;
+  transport: string;
+  discovered: string[];
+  calls: number;
 }
 
 export interface DispositionCase {

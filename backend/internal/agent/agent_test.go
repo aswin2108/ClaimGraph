@@ -27,10 +27,12 @@ type fakeProvider struct {
 	sends    int
 	received []ToolResult // every tool result the model was shown
 	texts    []string     // every user text the model was sent
+	specs    []ToolSpec   // the tools the model was offered
 }
 
 func (p *fakeProvider) Name() string { return "fake-model" }
-func (p *fakeProvider) NewConversation(string, []ToolSpec) Conversation {
+func (p *fakeProvider) NewConversation(_ string, tools []ToolSpec) Conversation {
+	p.specs = tools
 	return &fakeConv{p: p}
 }
 

@@ -90,6 +90,8 @@ describe("Run investigation agent (the only button that can spend LLM budget)", 
     expect(await screen.findByText(/shares a payout destination with CLM-2/)).toBeInTheDocument();
     expect(api.count("POST", "/agent")).toBe(1);
     expect(api.where("POST", "/agent")[0].body).toEqual({ hops: 3 });
+    // The tools were reached over MCP, and the panel says so.
+    expect(screen.getByTestId("mcp-line")).toHaveTextContent(/found 2 tools on the claimgraph MCP server \(tools\/list\) and sent 1 call/);
   });
 
   it("'Run again' sends one more request, no more", async () => {
@@ -106,6 +108,7 @@ describe("Run investigation agent (the only button that can spend LLM budget)", 
     await userEvent.click(screen.getByRole("button", { name: "Run investigation agent" }));
     expect(await screen.findByText("Deterministic")).toBeInTheDocument();
     expect(screen.getByText(/language model is turned off/i)).toBeInTheDocument();
+    expect(screen.queryByTestId("mcp-line")).toBeNull(); // no model call, no MCP claim
   });
 
   it("shows an error and allows a retry when the request fails", async () => {

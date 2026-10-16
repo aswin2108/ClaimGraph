@@ -40,16 +40,17 @@ const (
 
 // Fallback reasons (stable codes; details are logged, never returned).
 const (
-	ReasonDisabled   = "llm_disabled"
-	ReasonLLMError   = "llm_error"
-	ReasonTimeout    = "llm_timeout"
-	ReasonRefused    = "model_refused"
-	ReasonTruncated  = "output_truncated"
-	ReasonUngrounded = "invalid_or_ungrounded_output"
-	ReasonViolations = "tool_scope_violations"
-	ReasonTurnLimit  = "turn_limit_reached"
-	ReasonTokenLimit = "run_token_limit_reached"
-	ReasonBudget     = "llm_budget_exhausted"
+	ReasonDisabled    = "llm_disabled"
+	ReasonLLMError    = "llm_error"
+	ReasonTimeout     = "llm_timeout"
+	ReasonRefused     = "model_refused"
+	ReasonTruncated   = "output_truncated"
+	ReasonUngrounded  = "invalid_or_ungrounded_output"
+	ReasonViolations  = "tool_scope_violations"
+	ReasonTurnLimit   = "turn_limit_reached"
+	ReasonTokenLimit  = "run_token_limit_reached"
+	ReasonBudget      = "llm_budget_exhausted"
+	ReasonToolChannel = "tool_channel_error" // the MCP connection to the tools failed
 )
 
 // Request is one agent run.
@@ -79,6 +80,9 @@ type Result struct {
 	Recorded       *disposition.Case       `json:"recorded_disposition,omitempty"`
 	Trace          []TraceEntry            `json:"tool_trace"`
 	Usage          Usage                   `json:"usage"`
+	// Tools says how the model reached its tools (MCP tools/list + tools/call); nil when
+	// the model was not called.
+	Tools *ToolChannel `json:"tool_channel,omitempty"`
 	// RecommendedActions is the deterministic verification plan derived from the graph
 	// evidence (internal/actions). The model is shown it and may only refine the next step.
 	RecommendedActions *actions.Plan `json:"recommended_actions"`
@@ -188,7 +192,16 @@ func (a *Agent) runLLM(parent context.Context, tb *Toolbox, rep *scoring.Report,
 	tb.absorb(brief)
 	tb.scores[rep.Score] = true
 
-	conv := a.Provider.NewConversation(systemPrompt, Specs())
+	// The model is offered the tools the MCP server lists, and every call goes over MCP.
+	tools, err := openMCPTools(ctx, tb, Specs())
+	if err != nil {
+		a.Logger.Printf("agent MCP tool channel: %v", err)
+		return nil, ReasonToolChannel
+	}
+	defer tools.Close()
+	res.Tools = tools.channel
+
+	conv := a.Provider.NewConversation(systemPrompt, tools.Specs())
 	var (
 		results []ToolResult
 		text    = brief
@@ -221,7 +234,14 @@ func (a *Agent) runLLM(parent context.Context, tb *Toolbox, rep *scoring.Report,
 			}
 			results, text = results[:0], ""
 			for _, c := range t.Calls {
-				content, isErr, abort := tb.Execute(c)
+				content, isErr, abort, err := tools.Call(ctx, c)
+				if err != nil {
+					a.Logger.Printf("agent tool call: %v", err)
+					if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+						return nil, ReasonTimeout
+					}
+					return nil, ReasonToolChannel
+				}
 				results = append(results, ToolResult{CallID: c.ID, Content: content, IsError: isErr})
 				if abort != nil {
 					a.Logger.Printf("agent run aborted: %v", abort)

@@ -82,6 +82,10 @@ export const agentResult = (id: string, source = "llm"): AgentResult => ({
   },
   tool_trace: [{ seq: 1, tool: "GetClaim", input: "{}", ok: true, duration_ms: 3 }],
   usage: { turns: 2, tool_calls: 1, input_tokens: 10, output_tokens: 5 },
+  tool_channel:
+    source === "llm"
+      ? { protocol: "mcp", server: "claimgraph", version: "0.2.0", transport: "in-process", discovered: ["GetClaim", "FindRelatedClaims"], calls: 1 }
+      : undefined,
 });
 
 export const dispositionCase = (id: string, disposition: string): DispositionCase => ({

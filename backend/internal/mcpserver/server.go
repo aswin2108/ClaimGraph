@@ -74,7 +74,7 @@ func New(g *falkordb.Graph, lg *log.Logger) *mcp.Server {
 		srv.AddTool(&mcp.Tool{
 			Name:        spec.Name,
 			Description: spec.Description + " Requires BeginInvestigation first.",
-			InputSchema: objectSchema(spec.Properties, spec.Required),
+			InputSchema: agent.InputSchema(spec),
 			Annotations: readOnly,
 		}, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return s.call(spec.Name, req.Params.Arguments), nil

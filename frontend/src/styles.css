@@ -1237,6 +1237,13 @@ p.center {
     opacity: 0.4;
   }
 }
+.mcp-line {
+  margin: 8px 0 4px;
+  line-height: 1.5;
+}
+.mcp-line code {
+  font-size: 0.85em;
+}
 .trace {
   list-style: none;
   margin: 0;
