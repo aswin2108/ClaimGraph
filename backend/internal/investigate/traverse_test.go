@@ -124,6 +124,20 @@ func TestTraversalMatchesReferenceOnRandomGraphs(t *testing.T) {
 					t.Fatalf("engines disagree for %s hops=%d exclude=%q: %s", id, hops, ex, firstDiff(a, b))
 				}
 				compared++
+				if ex == "" && !got.Truncated {
+					// The one-query, ids-only variant (ConnectedOnly) must reach exactly the same claims.
+					only, cut, err := ConnectedOnly(g, id, hops)
+					if err != nil || cut {
+						t.Fatalf("ConnectedOnly %s hops=%d: %v cut=%v", id, hops, err, cut)
+					}
+					want := map[string]int{}
+					for _, c := range got.Connected {
+						want[c.ClaimID] = c.Hops
+					}
+					if fmt.Sprint(only) != fmt.Sprint(want) {
+						t.Fatalf("ConnectedOnly disagrees for %s hops=%d: %v vs %v", id, hops, only, want)
+					}
+				}
 				for _, rc := range got.RelatedClaims {
 					if rc.Hops > 1 {
 						multiHop++
@@ -263,10 +277,10 @@ func TestExcludedRelationshipsAreNotTraversed(t *testing.T) {
 	if q := directQuery(relSetsFor(CatRepairShop)); strings.Contains(q, "REPAIRED_AT") {
 		t.Error("repair_shop exclusion must drop REPAIRED_AT from the traversal")
 	}
-	if q := deepQuery(relSetsFor(CatContact), 2, 3, false, true); strings.Contains(q, "HAS_CONTACT") || !strings.Contains(q, "RESIDES_AT") || strings.Contains(q, "|") {
+	if q := deepQuery(relSetsFor(CatContact), 2, 3, false, outAggregated); strings.Contains(q, "HAS_CONTACT") || !strings.Contains(q, "RESIDES_AT") || strings.Contains(q, "|") {
 		t.Error("contact exclusion must drop only HAS_CONTACT")
 	}
-	if q := deepQuery(relSetsFor(""), 2, 3, false, true); strings.Count(q, "UNION ALL") != 4+8-1 {
+	if q := deepQuery(relSetsFor(""), 2, 3, false, outAggregated); strings.Count(q, "UNION ALL") != 4+8-1 {
 		t.Errorf("expected the 4 two-transition and 8 three-transition shapes, got %d branches", strings.Count(q, "UNION ALL")+1)
 	}
 }

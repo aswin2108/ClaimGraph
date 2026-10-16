@@ -1,38 +1,38 @@
 # ClaimGraph scale benchmark
 
-Graph `claimgraph_scale`: 20000 claims, 15670 claimants, 122455 nodes / 175527 relationships, 12 planted rings. Bulk load 8.5 s. Busiest repair shop SHOP-0000 serves 1494 claims. Synthetic data; results describe this book only.
+Graph `claimgraph_scale` as seeded (measured on a copy of its pristine snapshot, so claims submitted while testing the app are not included): 20000 claims, 15670 claimants, 122455 nodes / 175527 relationships, 12 planted rings. Bulk load 8.5 s. Busiest repair shop SHOP-0000 serves 1494 claims. Synthetic data; results describe this book only.
 
 ## Latency (ms, wall clock from Go, FalkorDB in local Docker)
 
 | sample | operation | n | p50 | p95 | max | errors |
 |---|---|---|---|---|---|---|
-| planted-ring claims | Analyze (traversal + score + prior cases) | 156 | 271 | 502 | 886 | 0 |
-| planted-ring claims | Counterfactual (exclude repair_shop) | 156 | 542 | 967 | 98531 | 0 |
-| planted-ring claims | FindRelatedClaims hops=1 | 156 | 32 | 47 | 348 | 0 |
-| planted-ring claims | FindRelatedClaims hops=2 | 156 | 79 | 126 | 659 | 0 |
-| planted-ring claims | FindRelatedClaims hops=3 | 156 | 278 | 468 | 1501 | 0 |
-| planted-ring claims | GetClaimRing (cached WCC/MSF + live facts) | 156 | 6 | 12 | 157 | 0 |
-| busiest-shop claims | Analyze (traversal + score + prior cases) | 50 | 215 | 442 | 859 | 0 |
-| busiest-shop claims | Counterfactual (exclude repair_shop) | 50 | 445 | 810 | 1533 | 0 |
-| busiest-shop claims | FindRelatedClaims hops=1 | 50 | 33 | 40 | 53 | 0 |
-| busiest-shop claims | FindRelatedClaims hops=2 | 50 | 70 | 95 | 157 | 0 |
-| busiest-shop claims | FindRelatedClaims hops=3 | 50 | 213 | 445 | 874 | 0 |
-| busiest-shop claims | GetClaimRing (cached WCC/MSF + live facts) | 50 | 5 | 8 | 10 | 0 |
-| random claims | Analyze (traversal + score + prior cases) | 200 | 243 | 689 | 1201 | 0 |
-| random claims | Counterfactual (exclude repair_shop) | 200 | 454 | 1107 | 2245 | 0 |
-| random claims | FindRelatedClaims hops=1 | 200 | 31 | 43 | 87 | 0 |
-| random claims | FindRelatedClaims hops=2 | 200 | 75 | 124 | 180 | 0 |
-| random claims | FindRelatedClaims hops=3 | 200 | 229 | 593 | 1157 | 0 |
-| random claims | GetClaimRing (cached WCC/MSF + live facts) | 200 | 5 | 8 | 100 | 0 |
-| book-wide | GetStrongestLink (algo.SPpaths) across a ring | 12 | 4 | 8 | 8 | 0 |
-| book-wide | ListRings (algo.WCC over the whole book) | 5 | 487 | 563 | 612 | 0 |
-| book-wide | GetClaimRing first call (cold: algo.WCC + algo.MSF over the whole book) | 1 | 1391 | 1391 | 1391 | 0 |
+| planted-ring claims | Analyze (traversal + score + prior cases) | 156 | 184 | 290 | 646 | 0 |
+| planted-ring claims | Counterfactual (exclude repair_shop) | 156 | 361 | 543 | 807 | 0 |
+| planted-ring claims | FindRelatedClaims hops=1 | 156 | 25 | 29 | 41 | 0 |
+| planted-ring claims | FindRelatedClaims hops=2 | 156 | 56 | 72 | 93 | 0 |
+| planted-ring claims | FindRelatedClaims hops=3 | 156 | 168 | 262 | 630 | 0 |
+| planted-ring claims | GetClaimRing (cached WCC/MSF + live facts) | 156 | 7 | 9 | 11 | 0 |
+| busiest-shop claims | Analyze (traversal + score + prior cases) | 50 | 143 | 273 | 546 | 0 |
+| busiest-shop claims | Counterfactual (exclude repair_shop) | 50 | 283 | 516 | 908 | 0 |
+| busiest-shop claims | FindRelatedClaims hops=1 | 50 | 25 | 27 | 29 | 0 |
+| busiest-shop claims | FindRelatedClaims hops=2 | 50 | 52 | 70 | 86 | 0 |
+| busiest-shop claims | FindRelatedClaims hops=3 | 50 | 133 | 266 | 564 | 0 |
+| busiest-shop claims | GetClaimRing (cached WCC/MSF + live facts) | 50 | 7 | 7 | 9 | 0 |
+| random claims | Analyze (traversal + score + prior cases) | 200 | 143 | 427 | 847 | 0 |
+| random claims | Counterfactual (exclude repair_shop) | 200 | 291 | 661 | 1690 | 0 |
+| random claims | FindRelatedClaims hops=1 | 200 | 25 | 29 | 50 | 0 |
+| random claims | FindRelatedClaims hops=2 | 200 | 56 | 80 | 110 | 0 |
+| random claims | FindRelatedClaims hops=3 | 200 | 131 | 407 | 878 | 0 |
+| random claims | GetClaimRing (cached WCC/MSF + live facts) | 200 | 7 | 9 | 16 | 0 |
+| book-wide | GetStrongestLink (algo.SPpaths) across a ring | 12 | 4 | 5 | 7 | 0 |
+| book-wide | ListRings (algo.WCC over the whole book) | 5 | 410 | 415 | 431 | 0 |
+| book-wide | GetClaimRing first call (cold: algo.WCC + algo.MSF over the whole book) | 1 | 1019 | 1019 | 1019 | 0 |
 
 Results cut by a limit at hops=3 (flagged `truncated`): planted-ring claims 0/156; busiest-shop claims 0/50; random claims 0/200; 
 
-Claims showing only 5 example paths for some multi-hop connection (presentation cap, no evidence lost): planted-ring claims 83/156; busiest-shop claims 16/50; random claims 74/200; 
+Claims showing only 5 example paths for some multi-hop connection (presentation cap, no evidence lost): planted-ring claims 83/156; busiest-shop claims 15/50; random claims 62/200; 
 
-Claims that use shared infrastructure (a shop, carrier IP, kiosk or vendor account used by more than 20 claims; counted once, not as connections): planted-ring claims 154/156; busiest-shop claims 50/50; random claims 197/200; 
+Claims that use shared infrastructure (a shop, carrier IP, kiosk or vendor account used by more than 20 claims; counted once, not as connections): planted-ring claims 154/156; busiest-shop claims 50/50; random claims 200/200; 
 
 ## Ring recovery (algo.WCC over strong evidence)
 
@@ -78,8 +78,8 @@ Top of the ring list:
 | sample | Low | Review | High Priority |
 |---|---|---|---|
 | planted-ring claims | 0 | 0 | 156 |
-| busiest-shop claims | 21 | 24 | 5 |
-| random claims | 77 | 104 | 19 |
+| busiest-shop claims | 31 | 17 | 2 |
+| random claims | 143 | 52 | 5 |
 
 The score uses direct (1-transition) evidence only; ring membership beyond that is shown by the ring tools and never changes the score.
 
@@ -90,14 +90,14 @@ The score uses direct (1-transition) evidence only; ring membership beyond that 
 | shared_claimant_payout | 25 | 53% | 24% | 18% |
 | shared_non_public_device | 20 | 50% | 0% | 0% |
 | shared_contact | 12 | 28% | 6% | 6% |
-| shared_address | 10 | 27% | 68% | 71% |
-| shared_repair_shop | 8 | 98% | 100% | 97% |
-| shared_public_ip | 3 | 37% | 62% | 52% |
-| connected_claims_breadth | 15 | 100% | 70% | 76% |
-| temporal_proximity | 10 | 97% | 18% | 13% |
-| claim_burst | 10 | 96% | 0% | 4% |
-| new_policy_cluster | 10 | 100% | 4% | 5% |
+| shared_address | 10 | 28% | 68% | 71% |
+| shared_repair_shop | 8 | 100% | 100% | 100% |
+| shared_public_ip | 3 | 38% | 62% | 52% |
+| connected_claims_breadth | 15 | 100% | 18% | 10% |
+| temporal_proximity | 10 | 97% | 8% | 4% |
+| claim_burst | 10 | 96% | 0% | 0% |
+| new_policy_cluster | 10 | 100% | 0% | 0% |
 | confirmed_fraud_history | 15 | 48% | 0% | 0% |
-| multi_signal_reinforcement | 10 | 51% | 0% | 0% |
+| multi_signal_reinforcement | 10 | 52% | 0% | 0% |
 | household-explained (bonus withheld) | - | 1% | 68% | 70% |
-| average score | - | 92 | 34 | 33 |
+| average score | - | 92 | 26 | 23 |

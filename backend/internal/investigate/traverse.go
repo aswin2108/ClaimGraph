@@ -107,7 +107,16 @@ func shapesOfLength(n int) [][]bool {
 // BEFORE the next transition expands it (a single long pattern would enumerate every
 // combination first). With pair set, the last claim is bound to $rel as well as the first
 // to $id. The branch returns the path as parallel node and edge lists.
-func shapeQuery(kinds []bool, rs relSets, pair bool, branch int, aggregate bool) string {
+// output selects what a traversal query returns.
+type output int
+
+const (
+	outPaths      output = iota // one row per path (nodes, edges, degrees)
+	outAggregated               // one row per reached claim with sample paths
+	outIDs                      // one row per reached claim: id and depth only (ConnectedOnly)
+)
+
+func shapeQuery(kinds []bool, rs relSets, pair bool, branch int, out output) string {
 	claimRels := typeList(rs.claim)
 	claimantRels := typeList(rs.claimant)
 	guard := len(kinds) >= 2
@@ -184,7 +193,11 @@ func shapeQuery(kinds []bool, rs relSets, pair bool, branch int, aggregate bool)
 	for i := range kinds {
 		degrees[i] = fmt.Sprintf("indegree(e%d)", i)
 	}
-	if aggregate {
+	if out == outIDs {
+		// Only which claims are reached at this depth (one row per claim, no evidence).
+		return fmt.Sprintf("%s\nRETURN DISTINCT x%d.claim_id AS id, %d AS hops LIMIT $limit", strings.Join(stages, "\n"), len(kinds), len(kinds))
+	}
+	if out == outAggregated {
 		// One row per reached claim, aggregated inside FalkorDB: the claim set is complete
 		// however many paths lead to it (no per-path row limit), with up to $per_claim
 		// sample paths for evidence. Paths multiply (8 x 20 x 20 ...); claims do not.
@@ -208,33 +221,41 @@ func typeList(types []string) string {
 
 // directQuery is one UNION ALL branch per single relationship type, so a busy repair shop
 // can never crowd the payout/device/contact/address signals out of the row limit.
-func directQuery(rs relSets) string {
+func directQuery(rs relSets) string { return directQueryOut(rs, outPaths) }
+
+func directQueryOut(rs relSets, out output) string {
+	ret := func(path string, branch int) string {
+		if out == outIDs {
+			return "RETURN DISTINCT x1.claim_id AS id, 1 AS hops LIMIT $limit"
+		}
+		return fmt.Sprintf("RETURN %s, [indegree(e0)] AS degrees, %d AS branch LIMIT $limit", path, branch)
+	}
 	var parts []string
 	for i, t := range rs.claim {
 		// Infrastructure is summarized by infrastructure(), not expanded into its users.
 		parts = append(parts, fmt.Sprintf(
 			"MATCH (x0:Claim {claim_id:$id})-[a:%s]->(e0) WHERE NOT ((indegree(e0) > $infra OR coalesce(a.w, %d) >= %d) AND coalesce(a.w, %d) > %d) "+
 				"WITH x0, a, e0 MATCH (e0)<-[b:%s]-(x1:Claim) WHERE ID(x0) <> ID(x1) AND NOT (x0)-[:FILED_BY]->()<-[:FILED_BY]-(x1) "+
-				"RETURN [x0, e0, x1] AS nodes, [a, b] AS edges, [indegree(e0)] AS degrees, %d AS branch LIMIT $limit",
-			t, ingest.CostContext, ingest.CostContext, ingest.CostContext, ingest.CostAddress, t, i))
+				"%s",
+			t, ingest.CostContext, ingest.CostContext, ingest.CostContext, ingest.CostAddress, t, ret("[x0, e0, x1] AS nodes, [a, b] AS edges", i)))
 	}
 	for i, t := range rs.claimant {
 		parts = append(parts, fmt.Sprintf(
 			"MATCH (x0:Claim {claim_id:$id})-[f0:FILED_BY]->(k0a:Claimant)-[a:%s]->(e0)<-[b:%s]-(k0b:Claimant)<-[f1:FILED_BY]-(x1:Claim) "+
 				"WHERE ID(x0) <> ID(x1) AND ID(k0a) <> ID(k0b) "+
-				"RETURN [x0, k0a, e0, k0b, x1] AS nodes, [f0, a, b, f1] AS edges, [indegree(e0)] AS degrees, %d AS branch LIMIT $limit", t, t, len(rs.claim)+i))
+				"%s", t, t, ret("[x0, k0a, e0, k0b, x1] AS nodes, [f0, a, b, f1] AS edges", len(rs.claim)+i)))
 	}
 	return strings.Join(parts, "\nUNION ALL\n")
 }
 
 // deepQuery covers every path of exactly the given transition counts (2 or 3). With
 // aggregate, each branch returns one row per reached claim instead of one row per path.
-func deepQuery(rs relSets, minLen, maxLen int, pair, aggregate bool) string {
+func deepQuery(rs relSets, minLen, maxLen int, pair bool, out output) string {
 	var parts []string
 	n := 0
 	for l := minLen; l <= maxLen; l++ {
 		for _, kinds := range shapesOfLength(l) {
-			parts = append(parts, shapeQuery(kinds, rs, pair, n, aggregate))
+			parts = append(parts, shapeQuery(kinds, rs, pair, n, out))
 			n++
 		}
 	}
@@ -444,9 +465,9 @@ func discover(g *falkordb.Graph, claimID string, maxHops int, exclude string) (c
 		// Aggregated first: complete claim set, one row per reached claim. If FalkorDB
 		// cannot finish that within the time limit (an unusually dense neighbourhood), fall
 		// back to row-limited path enumeration and report the result as truncated.
-		c, i, k, err = runWithin(g, deepQuery(rs, 2, maxHops, false, true), map[string]any{"id": claimID}, deepRowLimit, aggregatedTimeoutMs)
+		c, i, k, err = runWithin(g, deepQuery(rs, 2, maxHops, false, outAggregated), map[string]any{"id": claimID}, deepRowLimit, aggregatedTimeoutMs)
 		if errors.Is(err, ErrTraversalTimeout) {
-			c, i, _, err = run(g, deepQuery(rs, 2, maxHops, false, false), map[string]any{"id": claimID}, deepRowLimit)
+			c, i, _, err = run(g, deepQuery(rs, 2, maxHops, false, outPaths), map[string]any{"id": claimID}, deepRowLimit)
 			k = true
 		}
 		if err != nil {
@@ -586,7 +607,7 @@ func EvidencePaths(g *falkordb.Graph, claimID, relatedID string, maxHops int, ex
 	}
 	rs := relSetsFor(exclude)
 	for depth := 1; depth <= maxHops; depth++ {
-		chains, _, _, err := run(g, deepQuery(rs, depth, depth, true, false), map[string]any{"id": claimID, "rel": relatedID}, deepRowLimit)
+		chains, _, _, err := run(g, deepQuery(rs, depth, depth, true, outPaths), map[string]any{"id": claimID, "rel": relatedID}, deepRowLimit)
 		if err != nil {
 			return nil, err
 		}
@@ -604,4 +625,46 @@ func EvidencePaths(g *falkordb.Graph, claimID, relatedID string, maxHops int, ex
 		}
 	}
 	return nil, nil
+}
+
+// ConnectedOnly answers only "which claims are connected, and how many hops away" with the
+// same rules and Cypher fragments as FindRelatedClaims, in ONE query and without evidence
+// paths. It exists for comparisons (cmd/benchrel) and quick counts; investigations use
+// FindRelatedClaims, which returns the evidence. truncated is true when a row limit was hit.
+func ConnectedOnly(g *falkordb.Graph, claimID string, maxHops int) (hops map[string]int, truncated bool, err error) {
+	if !ingest.ValidID(claimID) {
+		return nil, false, fmt.Errorf("invalid claim_id %q", claimID)
+	}
+	if maxHops < 1 || maxHops > MaxHopsLimit {
+		return nil, false, fmt.Errorf("max_hops must be between 1 and %d", MaxHopsLimit)
+	}
+	rs := relSetsFor("")
+	parts := []string{directQueryOut(rs, outIDs)}
+	if maxHops >= 2 {
+		parts = append(parts, deepQuery(rs, 2, maxHops, false, outIDs))
+	}
+	params := map[string]any{"id": claimID, "limit": deepRowLimit + 1, "fanout": maxExpandFanout, "infra": InfrastructureMinClaims}
+	r, err := g.ROQuery(strings.Join(parts, "\nUNION ALL\n"), params, falkordb.NewQueryOptions().SetTimeout(aggregatedTimeoutMs))
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "timed out") {
+			return nil, false, ErrTraversalTimeout
+		}
+		return nil, false, err
+	}
+	hops = map[string]int{}
+	rows := 0
+	for r.Next() {
+		rows++
+		id, _ := r.Record().Get("id")
+		h, _ := r.Record().Get("hops")
+		s, _ := id.(string)
+		n, _ := h.(int64)
+		if s == "" || s == claimID {
+			continue
+		}
+		if cur, ok := hops[s]; !ok || int(n) < cur {
+			hops[s] = int(n)
+		}
+	}
+	return hops, rows >= serverResultCap, nil
 }
