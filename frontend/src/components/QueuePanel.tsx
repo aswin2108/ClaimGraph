@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api";
 import type { ClaimSummary, RingList, RingSummary } from "../types";
-import { DISPOSITION_LABEL, money, RING_INDICATOR_LABEL, RING_INDICATOR_SHORT } from "../ui";
+import { DISPOSITION_LABEL, money, OUTCOME_LABEL, RING_INDICATOR_LABEL, RING_INDICATOR_SHORT } from "../ui";
 import type { Preset } from "../presets";
 import IntakeCard from "./IntakeCard";
 
@@ -165,7 +165,13 @@ export default function QueuePanel(p: Props) {
                     <div className="q-sub">
                       <span className="muted small">Filed {c.filing_date}</span>
                       <span className={`dot ${c.policy_check_status === "passed" ? "dot-ok" : c.policy_check_status === "failed" ? "dot-off" : "dot-unk"}`} title={`Policy checks: ${c.policy_check_status}`} />
-                      {c.disposition && <span className="chip small-chip">{DISPOSITION_LABEL[c.disposition] ?? c.disposition}</span>}
+                      {c.investigation_outcome ? (
+                        <span className={`chip small-chip ${c.investigation_outcome === "approved" ? "chip-ok" : "chip-bad"}`}>
+                          {OUTCOME_LABEL[c.investigation_outcome] ?? c.investigation_outcome}
+                        </span>
+                      ) : (
+                        c.disposition && <span className="chip small-chip">{DISPOSITION_LABEL[c.disposition] ?? c.disposition}</span>
+                      )}
                     </div>
                   </button>
                 </li>

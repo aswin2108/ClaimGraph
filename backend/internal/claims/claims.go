@@ -31,6 +31,8 @@ type Summary struct {
 	Status            string `json:"status"`
 	PolicyCheckStatus string `json:"policy_check_status"`
 	Disposition       string `json:"disposition,omitempty"` // latest recorded investigator outcome
+	// Outcome is set when the investigation was closed: approved | rejected.
+	Outcome string `json:"investigation_outcome,omitempty"`
 }
 
 // Entity is a graph entity attached to a claim.
@@ -75,9 +77,9 @@ const (
 		WITH c ORDER BY c.filing_date DESC, c.claim_id SKIP $offset LIMIT $limit
 		OPTIONAL MATCH (ic:InvestigationCase)-[:INVESTIGATES]->(c)
 		WITH c, ic ORDER BY ic.timestamp DESC
-		WITH c, collect(ic.disposition)[0] AS disposition
+		WITH c, collect(ic.disposition)[0] AS disposition, collect(ic.outcome)[0] AS outcome
 		RETURN c.claim_id AS claim_id, c.filing_date AS filing_date, c.incident_date AS incident_date,
-		       c.amount AS amount, c.status AS status, c.policy_check_status AS pcs, disposition
+		       c.amount AS amount, c.status AS status, c.policy_check_status AS pcs, disposition, outcome
 		ORDER BY c.filing_date DESC, c.claim_id`
 
 	cypherCount = `MATCH (c:Claim) WHERE $q = '' OR c.claim_id CONTAINS $q RETURN count(c) AS n`
@@ -255,6 +257,7 @@ func summary(get getter) Summary {
 	s := Summary{
 		ClaimID: str(get, "claim_id"), FilingDate: str(get, "filing_date"), IncidentDate: str(get, "incident_date"),
 		Status: str(get, "status"), PolicyCheckStatus: str(get, "pcs"), Disposition: str(get, "disposition"),
+		Outcome: str(get, "outcome"),
 	}
 	if v, _ := get("amount"); v != nil {
 		if n, ok := v.(int64); ok {

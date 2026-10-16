@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 import {
-  agentResult, counterfactual, deferred, dispositionCase, fnolResult, graph, HttpError, installFakeApi, reportA, summary,
+  agentResult, closure as closureOf, counterfactual, deferred, dispositionCase, fnolResult, graph, HttpError, installFakeApi, reportA, summary,
 } from "./test/fakeApi";
 
 // Cytoscape needs a real canvas; the graph panel is covered by the browser e2e tests.
@@ -85,13 +85,14 @@ describe("Run investigation agent (the only button that can spend LLM budget)", 
     await userEvent.dblClick(btn);
     await userEvent.click(btn);
     expect(api.count("POST", "/agent")).toBe(1);
-    expect(screen.getByText(/Agent is reading the graph/)).toBeInTheDocument();
+    expect(screen.getByText(/Agent is reading the graph through its MCP tools/)).toBeInTheDocument();
     hold.resolve();
     expect(await screen.findByText(/shares a payout destination with CLM-2/)).toBeInTheDocument();
     expect(api.count("POST", "/agent")).toBe(1);
     expect(api.where("POST", "/agent")[0].body).toEqual({ hops: 3 });
     // The tools were reached over MCP, and the panel says so.
     expect(screen.getByTestId("mcp-line")).toHaveTextContent(/found 2 tools on the claimgraph MCP server \(tools\/list\) and sent 1 call/);
+    expect(screen.getByTestId("mcp-badge")).toHaveTextContent("MCP");
   });
 
   it("'Run again' sends one more request, no more", async () => {
@@ -109,6 +110,7 @@ describe("Run investigation agent (the only button that can spend LLM budget)", 
     expect(await screen.findByText("Deterministic")).toBeInTheDocument();
     expect(screen.getByText(/language model is turned off/i)).toBeInTheDocument();
     expect(screen.queryByTestId("mcp-line")).toBeNull(); // no model call, no MCP claim
+    expect(screen.queryByTestId("mcp-badge")).toBeNull();
   });
 
   it("shows an error and allows a retry when the request fails", async () => {
@@ -187,63 +189,111 @@ describe("counterfactual toggles", () => {
   });
 });
 
-describe("record disposition", () => {
-  it("records a normal outcome with one POST containing the notes, then clears them", async () => {
-    const api = await ready(installFakeApi());
-    const notes = screen.getByLabelText("Disposition notes");
-    await userEvent.type(notes, "checked the account holder");
-    await userEvent.click(screen.getByRole("button", { name: "No Fraud Found" }));
+describe("your decision (under the report) and closing the investigation", () => {
+  const runAgent = async () => {
+    await userEvent.click(screen.getByRole("button", { name: "Run investigation agent" }));
+    await screen.findByText(/shares a payout destination with CLM-2/);
+  };
 
-    await waitFor(() => expect(api.count("POST", "/disposition")).toBe(1));
-    expect(api.where("POST", "/disposition")[0].body).toEqual({ disposition: "not_substantiated", notes: "checked the account holder" });
-    expect(await screen.findByText(/Recorded: No Fraud Found/)).toBeInTheDocument();
-    expect(notes).toHaveValue("");
-    expect(api.count("GET", /\/api\/claims$/)).toBeGreaterThanOrEqual(2); // queue refreshed
+  it("shows Approve, Reject and Need more information only after a report exists", async () => {
+    await ready(installFakeApi());
+    expect(screen.queryByRole("button", { name: "Approve and close" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Need more information" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Run the investigation agent first/)).toBeInTheDocument();
+    await runAgent();
+    for (const name of ["Approve and close", "Reject and close", "Need more information"]) {
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    }
   });
 
-  it("'Confirmed Fraud' needs a second, explicit click and Cancel sends nothing", async () => {
+  it("approving needs a reason and a second click, sends one POST with the run id, then locks the claim", async () => {
     const api = await ready(installFakeApi());
-    await userEvent.click(screen.getByRole("button", { name: "Confirmed Fraud" }));
-    expect(api.count("POST", "/disposition")).toBe(0);
+    await runAgent();
+    const approve = screen.getByRole("button", { name: "Approve and close" });
+    expect(approve).toBeDisabled(); // no reason yet
+    await userEvent.type(screen.getByLabelText("Decision reason"), "Joint account verified with the bank");
+    await userEvent.click(approve);
+    expect(api.count("POST", "/close")).toBe(0);
+    await userEvent.click(screen.getByRole("button", { name: "Confirm: approve and close" }));
+
+    await waitFor(() => expect(api.count("POST", "/close")).toBe(1));
+    expect(api.where("POST", "/close")[0].body).toEqual({ run_id: "run-CLM-1", outcome: "approved", reason: "Joint account verified with the bank" });
+    const closed = await screen.findByLabelText("Investigation closed");
+    expect(closed).toHaveTextContent("Approved by investigator");
+    expect(closed).toHaveTextContent("“Joint account verified with the bank”");
+    expect(closed).toHaveTextContent(/normal claims processing/);
+    // Locked: no agent button and no decision buttons any more.
+    expect(screen.queryByRole("button", { name: /Run investigation agent|Run again/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Need more information" })).not.toBeInTheDocument();
+    // The queue shows the outcome.
+    await waitFor(() => expect(queue().getByText("Approved")).toBeInTheDocument());
+  });
+
+  it("rejecting asks once; Cancel sends nothing", async () => {
+    const api = await ready(installFakeApi());
+    await runAgent();
+    await userEvent.type(screen.getByLabelText("Decision reason"), "Payout holder is not the claimant");
+    await userEvent.click(screen.getByRole("button", { name: "Reject and close" }));
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(screen.getByRole("button", { name: "Confirmed Fraud" })).toBeInTheDocument();
-    expect(api.count("POST", "/disposition")).toBe(0);
-
-    await userEvent.click(screen.getByRole("button", { name: "Confirmed Fraud" }));
-    await userEvent.click(screen.getByRole("button", { name: "Click again to confirm" }));
-    await waitFor(() => expect(api.count("POST", "/disposition")).toBe(1));
-    expect(api.where("POST", "/disposition")[0].body.disposition).toBe("confirmed_fraud");
+    expect(api.count("POST", "/close")).toBe(0);
+    await userEvent.click(screen.getByRole("button", { name: "Reject and close" }));
+    await userEvent.click(screen.getByRole("button", { name: "Confirm: reject and close" }));
+    await waitFor(() => expect(api.count("POST", "/close")).toBe(1));
+    expect(api.where("POST", "/close")[0].body.outcome).toBe("rejected");
+    expect(await screen.findByLabelText("Investigation closed")).toHaveTextContent("Rejected by investigator");
   });
 
-  it("a pending confirmation does not carry over to another claim, and neither do typed notes", async () => {
-    const api = await ready(installFakeApi());
-    await userEvent.type(screen.getByLabelText("Disposition notes"), "note for claim 1");
-    await userEvent.click(screen.getByRole("button", { name: "Confirmed Fraud" }));
-    await userEvent.click(queue().getByRole("button", { name: /CLM-2/ }));
-    await waitFor(() => expect(screen.getByTestId("graph")).toHaveAttribute("data-target", "CLM-2"));
-    expect(screen.getByLabelText("Disposition notes")).toHaveValue("");
-    expect(screen.queryByRole("button", { name: "Click again to confirm" })).not.toBeInTheDocument();
-    expect(api.count("POST", "/disposition")).toBe(0);
-  });
-
-  it("a double click on a normal outcome records once (button is disabled while in flight)", async () => {
+  it("Need more information records once and keeps the investigation open", async () => {
     const hold = deferred();
     const api = await ready(
       installFakeApi({ "POST /api/claims/:id/disposition": async (c, p) => (await hold.promise, dispositionCase(p.id, c.body.disposition)) }),
     );
-    const btn = screen.getByRole("button", { name: "Needs More Information" });
-    await userEvent.dblClick(btn);
+    await runAgent();
+    await userEvent.type(screen.getByLabelText("Decision reason"), "asked the bank");
+    await userEvent.dblClick(screen.getByRole("button", { name: "Need more information" }));
     expect(api.count("POST", "/disposition")).toBe(1);
     hold.resolve();
-    await screen.findByText(/Recorded: Needs More Information/);
+    expect(await screen.findByText(/Recorded: Needs More Information\. The investigation stays open/)).toBeInTheDocument();
+    expect(api.where("POST", "/disposition")[0].body).toEqual({ disposition: "needs_info", notes: "asked the bank" });
+    expect(api.count("POST", "/close")).toBe(0);
+    expect(screen.getByRole("button", { name: "Approve and close" })).toBeInTheDocument();
   });
 
-  it("keeps the notes and shows the error when recording fails", async () => {
-    await ready(installFakeApi({ "POST /api/claims/:id/disposition": () => { throw new HttpError(400, { error: "notes too long" }); } }));
-    await userEvent.type(screen.getByLabelText("Disposition notes"), "keep me");
-    await userEvent.click(screen.getByRole("button", { name: "No Fraud Found" }));
-    expect(await screen.findByText("notes too long")).toBeInTheDocument();
-    expect(screen.getByLabelText("Disposition notes")).toHaveValue("keep me");
+  it("a pending confirmation and a typed reason do not carry over to another claim", async () => {
+    const api = await ready(installFakeApi());
+    await runAgent();
+    await userEvent.type(screen.getByLabelText("Decision reason"), "reason for claim 1");
+    await userEvent.click(screen.getByRole("button", { name: "Reject and close" }));
+    await userEvent.click(queue().getByRole("button", { name: /CLM-2/ }));
+    await waitFor(() => expect(screen.getByTestId("graph")).toHaveAttribute("data-target", "CLM-2"));
+    expect(screen.queryByRole("button", { name: /Confirm:/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Decision reason")).not.toBeInTheDocument(); // no report for CLM-2 yet
+    expect(api.count("POST", "/close")).toBe(0);
+  });
+
+  it("keeps the reason and shows the error when closing fails", async () => {
+    await ready(installFakeApi({ "POST /api/claims/:id/close": () => { throw new HttpError(409, { error: "this report is no longer available to seal" }); } }));
+    await runAgent();
+    await userEvent.type(screen.getByLabelText("Decision reason"), "keep me");
+    await userEvent.click(screen.getByRole("button", { name: "Approve and close" }));
+    await userEvent.click(screen.getByRole("button", { name: "Confirm: approve and close" }));
+    expect(await screen.findByText("this report is no longer available to seal")).toBeInTheDocument();
+    expect(screen.getByLabelText("Decision reason")).toHaveValue("keep me");
+    expect(screen.queryByLabelText("Investigation closed")).not.toBeInTheDocument();
+  });
+
+  it("a closed claim shows its sealed report on request, fetched once", async () => {
+    const api = await ready(
+      installFakeApi({ "GET /api/claims/:id": (_c, p) => ({ ...summary(p.id), closure: p.id === "CLM-1" ? closureOf(p.id, "rejected", "confirmed") : undefined }) }),
+    );
+    expect(await screen.findByLabelText("Investigation closed")).toHaveTextContent("Rejected by investigator");
+    expect(screen.queryByRole("button", { name: "Run investigation agent" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "View sealed report" }));
+    expect(await screen.findByLabelText("Sealed report")).toHaveTextContent(/shares a payout destination with CLM-2/);
+    await userEvent.click(screen.getByRole("button", { name: "Hide sealed report" }));
+    await userEvent.click(screen.getByRole("button", { name: "View sealed report" }));
+    expect(api.count("GET", "/sealed-report")).toBe(1);
+    expect(api.count("POST", "/agent")).toBe(0);
   });
 });
 

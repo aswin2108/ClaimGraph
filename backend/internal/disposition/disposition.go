@@ -35,6 +35,10 @@ var ErrInvalid = errors.New("invalid input")
 // ErrClaimNotFound is returned when the claim being closed out does not exist.
 var ErrClaimNotFound = investigate.ErrClaimNotFound
 
+// ErrClosed is returned for any new decision or agent run on a claim whose investigation
+// has been closed. A closed investigation is final (Reset demo restores the snapshot).
+var ErrClosed = errors.New("this investigation is closed")
+
 // Case is the stored outcome for a claim.
 type Case struct {
 	CaseID      string `json:"case_id"`
@@ -67,15 +71,18 @@ const (
 	cypherLookup = `
 		MATCH (c:Claim {claim_id:$claim_id})
 		OPTIONAL MATCH (ic:InvestigationCase {case_id:$case_id})
-		RETURN c.claim_id AS claim_id, ic.disposition AS existing`
+		RETURN c.claim_id AS claim_id, ic.disposition AS existing, ic.status AS status`
 
 	// MERGE on the deterministic case id keeps one case per claim: re-recording updates it.
+	// The WHERE makes a closed case immutable even if two requests race.
 	cypherRecord = `
 		MATCH (c:Claim {claim_id:$claim_id})
 		MERGE (ic:InvestigationCase {case_id:$case_id})
+		WITH c, ic WHERE coalesce(ic.status, '') <> 'closed'
 		  SET ic.disposition=$disposition, ic.notes=$notes, ic.timestamp=$ts, ic.source=$src
 		MERGE (ic)-[r:INVESTIGATES]->(c)
-		  SET r.source=$src, r.evidence_id=$evid, r.recorded_at=$ts`
+		  SET r.source=$src, r.evidence_id=$evid, r.recorded_at=$ts
+		RETURN ic.case_id AS case_id`
 )
 
 // CaseID is the stable identifier of the single case kept per claim.
@@ -96,18 +103,24 @@ func (r *Recorder) Record(claimID, disp, notes string) (*Case, error) {
 	}
 
 	caseID := CaseID(claimID)
-	existing, err := r.lookup(claimID, caseID)
+	existing, status, err := r.lookup(claimID, caseID)
 	if err != nil {
 		return nil, err
 	}
+	if status == StatusClosed {
+		return nil, ErrClosed
+	}
 
 	ts := r.Now().UTC().Format(time.RFC3339)
-	_, err = r.Graph.Query(cypherRecord, map[string]any{
+	res, err := r.Graph.Query(cypherRecord, map[string]any{
 		"claim_id": claimID, "case_id": caseID, "disposition": disp, "notes": notes,
 		"ts": ts, "src": sourceTag, "evid": "EVID-" + caseID,
 	}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("record disposition: %w", err)
+	}
+	if !res.Next() {
+		return nil, ErrClosed // closed by a concurrent request
 	}
 
 	c := &Case{CaseID: caseID, ClaimID: claimID, Disposition: disp, Notes: notes,
@@ -118,21 +131,25 @@ func (r *Recorder) Record(claimID, disp, notes string) (*Case, error) {
 	return c, nil
 }
 
-// lookup confirms the claim exists and returns the current disposition ("" if none).
-func (r *Recorder) lookup(claimID, caseID string) (string, error) {
+// lookup confirms the claim exists and returns the current disposition and case status
+// ("" if none).
+func (r *Recorder) lookup(claimID, caseID string) (existing, status string, err error) {
 	res, err := r.Graph.ROQuery(cypherLookup, map[string]any{"claim_id": claimID, "case_id": caseID}, nil)
 	if err != nil {
 		if strings.Contains(err.Error(), "empty key") {
-			return "", ErrClaimNotFound
+			return "", "", ErrClaimNotFound
 		}
-		return "", fmt.Errorf("lookup claim: %w", err)
+		return "", "", fmt.Errorf("lookup claim: %w", err)
 	}
 	if !res.Next() {
-		return "", ErrClaimNotFound
+		return "", "", ErrClaimNotFound
 	}
-	v, _ := res.Record().Get("existing")
-	s, _ := v.(string)
-	return s, nil
+	rec := res.Record()
+	v, _ := rec.Get("existing")
+	existing, _ = v.(string)
+	v, _ = rec.Get("status")
+	status, _ = v.(string)
+	return existing, status, nil
 }
 
 // cleanNotes trims notes, removes control characters and enforces the length limit.

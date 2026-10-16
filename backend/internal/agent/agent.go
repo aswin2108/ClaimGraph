@@ -83,6 +83,9 @@ type Result struct {
 	// Tools says how the model reached its tools (MCP tools/list + tools/call); nil when
 	// the model was not called.
 	Tools *ToolChannel `json:"tool_channel,omitempty"`
+	// RunID identifies this report so an investigator can close the investigation on exactly
+	// what they read (set by the API, which keeps recent reports; the agent itself is stateless).
+	RunID string `json:"run_id,omitempty"`
 	// RecommendedActions is the deterministic verification plan derived from the graph
 	// evidence (internal/actions). The model is shown it and may only refine the next step.
 	RecommendedActions *actions.Plan `json:"recommended_actions"`
@@ -119,6 +122,12 @@ func (a *Agent) Run(ctx context.Context, req Request) (*Result, error) {
 		if len([]rune(req.Decision.Notes)) > disposition.MaxNotesLen {
 			return nil, fmt.Errorf("%w: notes too long", ErrInvalid)
 		}
+	}
+	// A closed investigation is final: no new runs and no new decisions.
+	if closed, err := disposition.IsClosed(a.Graph, req.ClaimID); err != nil {
+		return nil, err
+	} else if closed {
+		return nil, disposition.ErrClosed
 	}
 	select {
 	case a.sem <- struct{}{}:

@@ -283,31 +283,57 @@ async function main() {
   await sleep(1200);
   check("'Run again' sends exactly one more POST", posts(since(m), "/agent").length === 1);
 
-  console.log("\nDisposition buttons and the memory loop");
-  // 1. a plain outcome on a different claim
+  console.log("\nDecision under the report, closing the investigation, and the memory loop");
+  const reason = 'textarea[aria-label="Decision reason"]';
+  const statusOf = async (method, path, body) =>
+    (await fetch(API + path, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined })).status;
+  // 1. "Need more information" on a different claim: recorded, investigation stays open
   let q = mark();
   await page.evaluate(() => [...document.querySelectorAll(".q-item")].find((b) => b.textContent.includes("CLM-E05")).click());
   await waitFor(() => document.querySelector(".claim-strip")?.textContent.includes("CLM-E05"), "select E05");
-  await page.type("textarea", "e2e note");
-  await click("No Fraud Found");
-  await waitFor(() => document.querySelector(".note.ok"), "disposition ok");
+  await sleep(500);
+  check("no decision buttons before a report exists", !(await btn("Need more information")).asElement() && !(await page.$(reason)));
+  await click("Run investigation agent");
+  await waitFor((r) => document.querySelector(r), "decision box", 15000, reason);
+  await page.type(reason, "e2e note");
+  await click("Need more information");
+  await waitFor(() => document.querySelector(".note.ok"), "needs info ok");
   const dp = posts(since(q), "/disposition");
-  check("one disposition POST with the typed notes", dp.length === 1 && eq(JSON.parse(dp[0].body), { disposition: "not_substantiated", notes: "e2e note" }));
-  check("the queue now shows the recorded outcome", (await page.$$eval(".q-item", (e) => e.some((b) => b.textContent.includes("CLM-E05") && b.textContent.includes("No Fraud Found")))));
-  check("notes were cleared after saving", (await page.$eval("textarea", (e) => e.value)) === "");
+  check("one disposition POST with the typed notes", dp.length === 1 && eq(JSON.parse(dp[0].body), { disposition: "needs_info", notes: "e2e note" }));
+  check("the queue now shows the recorded outcome", (await page.$$eval(".q-item", (e) => e.some((b) => b.textContent.includes("CLM-E05") && b.textContent.includes("Needs More Information")))));
+  check("the reason was cleared after saving", (await page.$eval(reason, (e) => e.value)) === "");
+  check("the investigation stays open", !!(await btn("Run again")).asElement() && !(await page.$('[aria-label="Investigation closed"]')));
   const stored = await api("GET", "/api/claims?limit=100");
-  check("the API agrees it was stored", stored.claims.find((c) => c.claim_id === "CLM-E05")?.disposition === "not_substantiated");
+  check("the API agrees it was stored", stored.claims.find((c) => c.claim_id === "CLM-E05")?.disposition === "needs_info");
 
-  // 2. confirmed fraud needs two clicks; record it on the OLD ring claim E01
+  // 2. Reject and close the OLD ring claim E01: two clicks, the report is sealed, the claim is locked
   await page.evaluate(() => [...document.querySelectorAll(".q-item")].find((b) => b.textContent.includes("CLM-E01")).click());
   await waitFor(() => document.querySelector(".claim-strip")?.textContent.includes("CLM-E01"), "select E01");
+  await sleep(500);
   q = mark();
-  await click("Confirmed Fraud");
+  await click("Run investigation agent");
+  await waitFor((r) => document.querySelector(r), "decision box E01", 15000, reason);
+  const runE01 = posts(since(q), "/agent").length;
+  await page.type(reason, "e2e: payout holder is not the claimant");
+  await click("Reject and close");
   await sleep(300);
-  check("first click on Confirmed Fraud sends nothing", posts(since(q), "/disposition").length === 0);
-  await click("Click again to confirm");
-  await waitFor(() => document.querySelector(".note.ok"), "confirmed recorded");
-  check("second click sends exactly one POST", posts(since(q), "/disposition").length === 1 && JSON.parse(posts(since(q), "/disposition")[0].body).disposition === "confirmed_fraud");
+  check("first click on Reject sends nothing", posts(since(q), "/close").length === 0 && runE01 === 1);
+  await click("Confirm: reject and close");
+  await waitFor(() => document.querySelector('[aria-label="Investigation closed"]'), "closed", 10000);
+  const cp = posts(since(q), "/close");
+  const cbody = cp.length === 1 ? JSON.parse(cp[0].body) : {};
+  check("second click sends exactly one close POST with the report's run id", cp.length === 1 && cbody.outcome === "rejected" && /^[0-9a-f]{32}$/.test(cbody.run_id ?? ""));
+  check("the panel shows the decision as the investigator's", (await text('[aria-label="Investigation closed"]')).includes("Rejected by investigator"));
+  check("the agent and decision buttons are gone", !(await btn("Run investigation agent")).asElement() && !(await btn("Need more information")).asElement());
+  check("the queue and the top bar show Rejected", (await page.$$eval(".q-item", (e) => e.some((b) => b.textContent.includes("CLM-E01") && b.textContent.includes("Rejected")))) && (await text(".claim-strip")).includes("Rejected"));
+  const sealedE01 = await api("GET", "/api/claims/CLM-E01/sealed-report");
+  check("the sealed report is the one that was read", sealedE01.run_id === cbody.run_id);
+  check("the server refuses new runs and decisions on the closed claim (409)",
+    (await statusOf("POST", "/api/claims/CLM-E01/agent", {})) === 409 && (await statusOf("POST", "/api/claims/CLM-E01/disposition", { disposition: "needs_info" })) === 409);
+  q = mark();
+  await click("View sealed report");
+  await waitFor(() => document.querySelector('[aria-label="Sealed report"]'), "sealed report shown");
+  check("viewing the sealed report reads it once and never runs the agent", posts(since(q), "/agent").length === 0 && since(q).filter((r) => r.path.endsWith("/sealed-report")).length === 1);
 
   // 3. the memory loop: the later related claim now scores the history bonus
   await page.evaluate((t) => [...document.querySelectorAll(".q-item")].find((b) => b.textContent.includes(t)).click(), T);
@@ -354,7 +380,8 @@ async function main() {
   check("exactly one reset POST", posts(since(m), "/api/demo/reset").length === 1);
   const afterReset = await api("GET", "/api/claims?limit=100");
   check("every claim submitted during the run is gone", eq(afterReset.claims.map((c) => c.claim_id).sort(), ["CLM-E01", "CLM-E02", "CLM-E03", "CLM-E04", "CLM-E05"]), afterReset.claims.map((c) => c.claim_id).join(","));
-  check("every outcome recorded during the run is gone", afterReset.claims.every((c) => !c.disposition));
+  check("every outcome recorded during the run is gone", afterReset.claims.every((c) => !c.disposition && !c.investigation_outcome));
+  check("the closed investigation is open again", !(await api("GET", "/api/claims/CLM-E01")).closure);
   check("the queue shows the restored claims", (await page.$$eval('[aria-label="Claim queue"] .q-item', (e) => e.length)) === 5);
   const restored = await api("GET", `/api/claims/${T}/investigation?hops=3`);
   check("the score is back to its starting value (no +15 from the outcome recorded earlier)", restored.score === baseline.score, `now=${restored.score} start=${baseline.score}`);
@@ -363,7 +390,8 @@ async function main() {
 
   console.log("\nPage health");
   check("no console errors or uncaught exceptions", problems.length === 0, problems.join(" | "));
-  check("the agent was only ever called by explicit button clicks", posts(reqs, "/agent").length === 2);
+  // 4 clicks in this script: Run + Run again on the target, then one report each on E05 and E01 before deciding.
+  check("the agent was only ever called by explicit button clicks", posts(reqs, "/agent").length === 4);
 
   await browser.close();
 }

@@ -195,10 +195,11 @@ describe("returning to a decided claim", () => {
     expect(box).toHaveTextContent("15 Oct 2026");
     expect(box).toHaveTextContent("“waiting for the bank”");
 
-    await userEvent.type(screen.getByLabelText("Disposition notes"), "holder confirmed");
-    await userEvent.click(screen.getByRole("button", { name: "No Fraud Found" }));
-    await waitFor(() => expect(screen.getByLabelText("Recorded decision")).toHaveTextContent("No Fraud Found"));
-    expect(screen.getByLabelText("Recorded decision")).toHaveTextContent("“holder confirmed”");
+    await userEvent.click(screen.getByRole("button", { name: "Run investigation agent" }));
+    await userEvent.type(await screen.findByLabelText("Decision reason"), "bank replied, still checking");
+    await userEvent.click(screen.getByRole("button", { name: "Need more information" }));
+    await waitFor(() => expect(screen.getByLabelText("Recorded decision")).toHaveTextContent("“bank replied, still checking”"));
+    expect(screen.getByLabelText("Recorded decision")).toHaveTextContent("Needs More Information");
   });
 
   it("shows no decision box for a claim nobody has decided", async () => {

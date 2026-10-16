@@ -363,6 +363,15 @@ p.center {
 .btn-ghost {
   background: #fff;
 }
+.btn-ok {
+  color: #15803d;
+  border-color: #bbf7d0;
+  background: #f4fdf7;
+}
+.btn-ok:hover:not(:disabled) {
+  background: #dcfce7;
+  border-color: #86efac;
+}
 .wide {
   width: 100%;
   margin-top: 8px;
@@ -1237,6 +1246,11 @@ p.center {
     opacity: 0.4;
   }
 }
+.head-chips {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
 .mcp-line {
   margin: 8px 0 4px;
   line-height: 1.5;
@@ -1290,6 +1304,23 @@ textarea {
 .dispo {
   display: grid;
   gap: 8px;
+}
+.decision-box {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 8px;
+}
+.decision-box h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.decision-box textarea {
+  width: 100%;
+}
+.agent-out.sealed {
+  margin-top: 10px;
 }
 
 /* ---------- responsive ---------- */

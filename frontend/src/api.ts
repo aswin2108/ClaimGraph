@@ -2,6 +2,7 @@ import type {
   AgentResult,
   ClaimDetail,
   ClaimPage,
+  Closure,
   Counterfactual,
   DemoResetResult,
   DispositionCase,
@@ -68,6 +69,10 @@ export const api = {
   disposition: (id: string, disposition: string, notes: string) =>
     call<DispositionCase>(`/api/claims/${enc(id)}/disposition`, json("POST", { disposition, notes })),
   agent: (id: string, hops: number) => call<AgentResult>(`/api/claims/${enc(id)}/agent`, json("POST", { hops })),
+  /** Final decision on the report of run_id; the server seals that report (the browser never sends it). */
+  close: (id: string, runId: string, outcome: "approved" | "rejected", reason: string) =>
+    call<Closure>(`/api/claims/${enc(id)}/close`, json("POST", { run_id: runId, outcome, reason })),
+  sealedReport: (id: string) => call<AgentResult>(`/api/claims/${enc(id)}/sealed-report`),
   ring: (id: string) => call<Ring>(`/api/claims/${enc(id)}/ring`),
   rings: () => call<RingList>("/api/rings?min_size=3&limit=20"),
   link: (id: string, other: string) => call<StrongestLink>(`/api/claims/${enc(id)}/link/${enc(other)}`),

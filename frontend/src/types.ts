@@ -17,6 +17,8 @@ export interface ClaimSummary {
   status: string;
   policy_check_status: string;
   disposition?: string;
+  /** Set once the investigation was closed: approved | rejected. */
+  investigation_outcome?: string;
 }
 
 export interface ClaimPage {
@@ -45,8 +47,22 @@ export interface RecordedDecision {
   source?: string; // investigator_simulated = recorded in this app; anything else = the synthetic history
 }
 
+/** A closed investigation: the investigator's final decision and the report it sealed. */
+export interface Closure {
+  case_id: string;
+  claim_id: string;
+  outcome: string; // approved | rejected
+  disposition: string;
+  reason: string;
+  closed_at: string;
+  report_score: number;
+  report_band: string;
+  report_source: string; // llm | deterministic_fallback
+}
+
 export interface ClaimDetail extends ClaimSummary {
   recorded_decision?: RecordedDecision; // latest outcome with notes and date (UI only; never sent to the model)
+  closure?: Closure; // present once the investigation is closed (final)
   policy_checks?: { name: string; passed: boolean }[]; // the ordinary intake checks, re-run on the stored policy
   loss_type?: string;
   incident_location?: string;
@@ -251,6 +267,8 @@ export interface AgentResult {
   usage: { turns: number; tool_calls: number; input_tokens: number; output_tokens: number };
   /** How the model reached its tools: MCP tools/list + tools/call. Absent when the model was not called. */
   tool_channel?: ToolChannel;
+  /** Identifies this report so the investigator can close the investigation on exactly what they read. */
+  run_id?: string;
 }
 export interface ToolChannel {
   protocol: string;

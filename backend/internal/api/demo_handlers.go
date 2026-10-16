@@ -57,6 +57,7 @@ func (s *Server) handleDemoReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.lastReset = time.Now()
+	s.reports.clear() // reports of the replaced graph can no longer be sealed
 	s.logger.Printf("demo reset: graph %s restored from %s (%d claims, %d ms)", res.Graph, res.Snapshot, res.Claims, res.DurationMs)
 	writeJSON(w, http.StatusOK, res)
 }

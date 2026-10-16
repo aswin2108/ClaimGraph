@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { ActionPlan, AgentResult, Meta } from "../types";
 import Hint from "./Hint";
 
@@ -12,6 +12,8 @@ interface Props {
   onRun: () => void;
   /** Deterministic verification plan derived from the graph (no model involved). */
   plan?: ActionPlan | null;
+  /** The investigator's decision box, shown under the report. */
+  children?: ReactNode;
 }
 
 function Actions({ plan }: { plan: ActionPlan }) {
@@ -69,7 +71,7 @@ const REASONS: Record<string, string> = {
 const MCP_HINT =
   "MCP (Model Context Protocol) is the standard way AI agents find and call tools. This agent does not have its tools built in: each run connects to the ClaimGraph MCP server, asks it which tools exist (tools/list) and sends every call through it (tools/call). The server checks each call (allowed tools, scope, limits) before it touches FalkorDB. Claude Code, Claude Desktop or Cursor can connect to the same tools with cmd/mcp.";
 
-export default function NextStepPanel({ meta, result, busy, blocked, error, onRun, plan }: Props) {
+export default function NextStepPanel({ meta, result, busy, blocked, error, onRun, plan, children }: Props) {
   const [showTrace, setShowTrace] = useState(false);
   const ex = result?.explanation;
   const b = meta?.agent_budget;
@@ -79,8 +81,15 @@ export default function NextStepPanel({ meta, result, busy, blocked, error, onRu
       <header className="card-head">
         <h2>Next verification step</h2>
         {result && (
-          <span className={`chip ${result.source === "llm" ? "chip-ai" : ""}`}>
-            {result.source === "llm" ? `AI · ${result.model}` : "Deterministic"}
+          <span className="head-chips">
+            {result.tool_channel && (
+              <span className="chip chip-ai" data-testid="mcp-badge" title="The agent found and called its tools through the ClaimGraph MCP server">
+                MCP
+              </span>
+            )}
+            <span className={`chip ${result.source === "llm" ? "chip-ai" : ""}`}>
+              {result.source === "llm" ? `AI · ${result.model}` : "Deterministic"}
+            </span>
           </span>
         )}
       </header>
@@ -106,7 +115,13 @@ export default function NextStepPanel({ meta, result, busy, blocked, error, onRu
           )}
         </>
       )}
-      {busy && <div className="pulse-line">Agent is reading the graph… this can take up to a minute.</div>}
+      {busy && (
+        <div className="pulse-line">
+          {meta?.llm_enabled
+            ? "Agent is reading the graph through its MCP tools… this can take up to a minute."
+            : "Agent is reading the graph… this can take up to a minute."}
+        </div>
+      )}
       {error && <p className="note bad">{error}</p>}
 
       {ex && !busy && (
@@ -166,6 +181,7 @@ export default function NextStepPanel({ meta, result, busy, blocked, error, onRu
           </button>
         </div>
       )}
+      {children}
     </section>
   );
 }

@@ -1,6 +1,6 @@
 import { vi } from "vitest";
 import type {
-  AgentResult, AlgoLink, ClaimDetail, ClaimSummary, Counterfactual, DispositionCase, Factor, FNOLResult, GraphView, Meta, Report, Ring,
+  AgentResult, AlgoLink, ClaimDetail, ClaimSummary, Closure, Counterfactual, DispositionCase, Factor, FNOLResult, GraphView, Meta, Report, Ring,
   RingList, StrongestLink,
 } from "../types";
 
@@ -82,10 +82,16 @@ export const agentResult = (id: string, source = "llm"): AgentResult => ({
   },
   tool_trace: [{ seq: 1, tool: "GetClaim", input: "{}", ok: true, duration_ms: 3 }],
   usage: { turns: 2, tool_calls: 1, input_tokens: 10, output_tokens: 5 },
+  run_id: `run-${id}`,
   tool_channel:
     source === "llm"
       ? { protocol: "mcp", server: "claimgraph", version: "0.2.0", transport: "in-process", discovered: ["GetClaim", "FindRelatedClaims"], calls: 1 }
       : undefined,
+});
+
+export const closure = (id: string, outcome: string, reason: string): Closure => ({
+  case_id: `CASE-${id}`, claim_id: id, outcome, disposition: outcome === "approved" ? "not_substantiated" : "confirmed_fraud",
+  reason, closed_at: "2026-10-16T17:10:00Z", report_score: 88, report_band: "High Priority", report_source: "llm",
 });
 
 export const dispositionCase = (id: string, disposition: string): DispositionCase => ({
@@ -164,6 +170,7 @@ export const ringList = (): RingList => ({
 export function installFakeApi(overrides: Record<string, Handler> = {}) {
   const calls: Call[] = [];
   let claims: ClaimSummary[] = [summary("CLM-1"), summary("CLM-2", { filing_date: "2026-09-07" })];
+  const closures: Record<string, Closure> = {}; // POST /close makes the claim closed for later reads
 
   const defaults: Record<string, Handler> = {
     "GET /api/meta": () => meta,
@@ -171,10 +178,18 @@ export function installFakeApi(overrides: Record<string, Handler> = {}) {
       const q = (c.query.get("q") ?? "").toUpperCase();
       const offset = Number(c.query.get("offset") ?? 0);
       const limit = Number(c.query.get("limit") ?? 100);
-      const hits = claims.filter((x) => !q || x.claim_id.includes(q));
+      const hits = claims
+        .filter((x) => !q || x.claim_id.includes(q))
+        .map((x) => (closures[x.claim_id] ? { ...x, investigation_outcome: closures[x.claim_id].outcome } : x));
       return { claims: hits.slice(offset, offset + limit), total: hits.length, offset, limit, q: q || undefined };
     },
-    "GET /api/claims/:id": (_c, p) => detail(p.id),
+    "GET /api/claims/:id": (_c, p) => ({ ...detail(p.id), closure: closures[p.id] }),
+    "POST /api/claims/:id/close": (c, p) => {
+      if (closures[p.id]) throw new HttpError(409, { error: "this investigation is closed" });
+      closures[p.id] = closure(p.id, c.body.outcome, c.body.reason);
+      return closures[p.id];
+    },
+    "GET /api/claims/:id/sealed-report": (_c, p) => agentResult(p.id),
     "GET /api/claims/:id/investigation": (_c, p) => reportA(p.id),
     "GET /api/claims/:id/graph": (c, p) => graph(p.id, c.query.get("exclude") ?? undefined),
     "POST /api/claims/:id/counterfactual": (c, p) => counterfactual(p.id, c.body.exclude),

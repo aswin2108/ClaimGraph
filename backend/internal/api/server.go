@@ -39,6 +39,8 @@ type Server struct {
 	logger     *log.Logger
 	mux        *http.ServeMux
 
+	reports *reportStore // recent agent reports, so a closure seals exactly what the investigator read
+
 	demoDB    *falkordb.FalkorDB // set by EnableDemoReset; nil = POST /api/demo/reset is disabled
 	resetMu   sync.Mutex
 	lastReset time.Time
@@ -50,7 +52,7 @@ func New(g *falkordb.Graph, corsOrigin string, logger *log.Logger) *Server {
 	if logger == nil {
 		logger = log.Default()
 	}
-	s := &Server{g: g, rec: disposition.New(g), agent: agent.New(g, nil, logger), corsOrigin: corsOrigin, logger: logger, mux: http.NewServeMux(),
+	s := &Server{g: g, rec: disposition.New(g), agent: agent.New(g, nil, logger), corsOrigin: corsOrigin, logger: logger, mux: http.NewServeMux(), reports: newReportStore(),
 		hosts: map[string]bool{"localhost": true, "127.0.0.1": true, "::1": true}}
 	s.routes()
 	return s
@@ -90,6 +92,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/claims/{id}/counterfactual", s.handleCounterfactual)
 	s.mux.HandleFunc("POST /api/claims/{id}/disposition", s.handleDisposition)
 	s.mux.HandleFunc("POST /api/claims/{id}/agent", s.handleAgent)
+	s.mux.HandleFunc("POST /api/claims/{id}/close", s.handleClose)
+	s.mux.HandleFunc("GET /api/claims/{id}/sealed-report", s.handleSealedReport)
 	s.mux.HandleFunc("GET /api/claims/{id}/ring", s.handleRing)
 	s.mux.HandleFunc("GET /api/claims/{id}/link/{other}", s.handleStrongestLink)
 	s.mux.HandleFunc("GET /api/rings", s.handleRings)
@@ -135,6 +139,8 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusTooManyRequests, "the agent is busy; try again shortly")
 	case errors.Is(err, disposition.ErrInvalid):
 		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, disposition.ErrClosed):
+		writeError(w, http.StatusConflict, "this investigation is closed; the sealed report can still be viewed")
 	default:
 		s.logger.Printf("internal error: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

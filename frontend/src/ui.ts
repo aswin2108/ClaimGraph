@@ -57,6 +57,16 @@ export const DISPOSITION_LABEL: Record<string, string> = {
   needs_info: "Needs More Information",
 };
 
+/** Closing outcomes, always shown as the investigator's decision. */
+export const OUTCOME_LABEL: Record<string, string> = {
+  approved: "Approved",
+  rejected: "Rejected",
+};
+export const OUTCOME_DETAIL: Record<string, string> = {
+  approved: "No fraud found. The claim returns to normal claims processing (outside ClaimGraph).",
+  rejected: "Fraud confirmed by the investigator. Later claims linked to this one get the confirmed-case points.",
+};
+
 export const BAND_COLOR: Record<string, string> = {
   Low: "#16a34a",
   Review: "#d97706",

@@ -2,14 +2,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "./api";
 import type { AgentResult, ClaimDetail, ClaimSummary, Counterfactual, GraphStats, GraphView, Meta, Report, Ring } from "./types";
 import { presetsFor } from "./presets";
-import { CATEGORY_LABEL, DISPOSITION_LABEL, money } from "./ui";
+import { CATEGORY_LABEL, DISPOSITION_LABEL, money, OUTCOME_LABEL } from "./ui";
 import QueuePanel from "./components/QueuePanel";
 import GraphPanel from "./components/GraphPanel";
 import EvidencePanel from "./components/EvidencePanel";
 import PriorityPanel from "./components/PriorityPanel";
 import CounterfactualPanel from "./components/CounterfactualPanel";
 import NextStepPanel from "./components/NextStepPanel";
-import DispositionPanel from "./components/DispositionPanel";
+import DecisionBox from "./components/DecisionBox";
+import ClosedPanel from "./components/ClosedPanel";
 import RingPanel from "./components/RingPanel";
 import type { GraphViewMode } from "./components/ViewTabs";
 
@@ -257,7 +258,10 @@ export default function App() {
       const c = await api.disposition(selected, disposition, notes);
       setDispMsg({
         ok: true,
-        text: `${c.created ? "Recorded" : "Updated"}: ${DISPOSITION_LABEL[c.disposition]}. It will appear in future related investigations.`,
+        text:
+          c.disposition === "needs_info"
+            ? `Recorded: ${DISPOSITION_LABEL[c.disposition]}. The investigation stays open.`
+            : `${c.created ? "Recorded" : "Updated"}: ${DISPOSITION_LABEL[c.disposition]}. It will appear in future related investigations.`,
       });
       refreshQueue();
       api.claim(selected).then(setDetail).catch(() => undefined); // the selected claim may not be on the loaded page
@@ -272,8 +276,30 @@ export default function App() {
     }
   };
 
+  const closeInvestigation = async (outcome: "approved" | "rejected", reason: string): Promise<boolean> => {
+    const id = selected;
+    const runId = agent?.report.target_claim === id ? agent?.run_id : undefined;
+    if (!id || !runId) return false;
+    setDispBusy(true);
+    setDispMsg(null);
+    try {
+      const c = await api.close(id, runId, outcome, reason);
+      refreshQueue();
+      api.claim(id).then(setDetail).catch(() => undefined); // brings the closure: the panel switches to "Investigation closed"
+      loadRing(id, false); // the ring's recorded cases changed
+      setRingsVersion((v) => v + 1);
+      setDispMsg({ ok: true, text: `${OUTCOME_LABEL[c.outcome]}: investigation closed.` });
+      return true;
+    } catch (e) {
+      setDispMsg({ ok: false, text: msg(e) });
+      return false;
+    } finally {
+      setDispBusy(false);
+    }
+  };
+
   const shown = cf ? cf.counterfactual : report;
-  const current = queue.find((c) => c.claim_id === selected)?.disposition ?? (detail?.claim_id === selected ? detail?.disposition : undefined);
+  const closure = detail?.claim_id === selected ? detail?.closure : undefined;
 
   return (
     <div className="app">
@@ -300,6 +326,11 @@ export default function App() {
               <span className={`chip ${detail.policy_check_status === "passed" ? "chip-ok" : detail.policy_check_status === "failed" ? "chip-bad" : ""}`}>
                 Policy checks {detail.policy_check_status}
               </span>
+              {detail.closure && (
+                <span className={`chip ${detail.closure.outcome === "approved" ? "chip-ok" : "chip-bad"}`}>
+                  {OUTCOME_LABEL[detail.closure.outcome] ?? detail.closure.outcome} · closed
+                </span>
+              )}
             </div>
           )}
           {meta?.demo_reset_available && (
@@ -389,24 +420,30 @@ export default function App() {
             busy={cfBusy || loading}
             onToggle={toggle}
           />
-          <NextStepPanel
-            meta={meta}
-            result={agent}
-            busy={agentBusyFor !== null && agentBusyFor === selected}
-            blocked={agentBusyFor !== null && agentBusyFor !== selected}
-            error={agentErr}
-            onRun={runAgent}
-            plan={report?.recommended_actions}
-          />
-          <DispositionPanel
-            claimId={selected}
-            dispositions={meta?.dispositions ?? []}
-            current={current}
-            decision={detail?.claim_id === selected ? detail?.recorded_decision : null}
-            busy={dispBusy}
-            message={dispMsg}
-            onRecord={record}
-          />
+          {closure ? (
+            <ClosedPanel closure={closure} loadSealed={() => api.sealedReport(closure.claim_id)} />
+          ) : (
+            <NextStepPanel
+              meta={meta}
+              result={agent}
+              busy={agentBusyFor !== null && agentBusyFor === selected}
+              blocked={agentBusyFor !== null && agentBusyFor !== selected}
+              error={agentErr}
+              onRun={runAgent}
+              plan={report?.recommended_actions}
+            >
+              <DecisionBox
+                claimId={selected}
+                hasReport={!!agent && agentBusyFor !== selected}
+                canClose={!!agent?.run_id}
+                decision={detail?.claim_id === selected ? detail?.recorded_decision : null}
+                busy={dispBusy}
+                message={dispMsg}
+                onClose={closeInvestigation}
+                onNeedInfo={(notes) => record("needs_info", notes)}
+              />
+            </NextStepPanel>
+          )}
         </div>
       </main>
 

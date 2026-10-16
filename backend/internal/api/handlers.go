@@ -120,11 +120,17 @@ func (s *Server) handleGetClaim(w http.ResponseWriter, r *http.Request) {
 		s.logger.Printf("latest decision for %s: %v", id, err)
 		decision = nil
 	}
+	closure, err := disposition.ClosureOf(s.g, id)
+	if err != nil {
+		s.logger.Printf("closure for %s: %v", id, err)
+		closure = nil
+	}
 	writeJSON(w, http.StatusOK, struct {
 		*claims.Claim
 		Decision     *disposition.Case    `json:"recorded_decision,omitempty"`
+		Closure      *disposition.Closure `json:"closure,omitempty"`
 		PolicyChecks []ingest.PolicyCheck `json:"policy_checks,omitempty"`
-	}{c, decision, policyChecks(c)})
+	}{c, decision, closure, policyChecks(c)})
 }
 
 // policyChecks re-runs the ordinary intake checks on the stored claim and policy, with the
@@ -305,6 +311,9 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 	res, err := s.agent.Run(r.Context(), agent.Request{ClaimID: id, Hops: req.Hops, Decision: req.InvestigatorDecision})
 	if s.handle(w, err) {
 		return
+	}
+	if err := s.reports.put(id, res); err != nil {
+		s.logger.Printf("keep agent report for %s: %v", id, err) // the report is still returned; it just cannot be sealed
 	}
 	writeJSON(w, http.StatusOK, res)
 }
