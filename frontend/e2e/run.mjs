@@ -289,11 +289,11 @@ async function main() {
   await page.evaluate(() => [...document.querySelectorAll(".q-item")].find((b) => b.textContent.includes("CLM-E05")).click());
   await waitFor(() => document.querySelector(".claim-strip")?.textContent.includes("CLM-E05"), "select E05");
   await page.type("textarea", "e2e note");
-  await click("Not Substantiated");
+  await click("No Fraud Found");
   await waitFor(() => document.querySelector(".note.ok"), "disposition ok");
   const dp = posts(since(q), "/disposition");
   check("one disposition POST with the typed notes", dp.length === 1 && eq(JSON.parse(dp[0].body), { disposition: "not_substantiated", notes: "e2e note" }));
-  check("the queue now shows the recorded outcome", (await page.$$eval(".q-item", (e) => e.some((b) => b.textContent.includes("CLM-E05") && b.textContent.includes("Not Substantiated")))));
+  check("the queue now shows the recorded outcome", (await page.$$eval(".q-item", (e) => e.some((b) => b.textContent.includes("CLM-E05") && b.textContent.includes("No Fraud Found")))));
   check("notes were cleared after saving", (await page.$eval("textarea", (e) => e.value)) === "");
   const stored = await api("GET", "/api/claims?limit=100");
   check("the API agrees it was stored", stored.claims.find((c) => c.claim_id === "CLM-E05")?.disposition === "not_substantiated");

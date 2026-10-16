@@ -189,11 +189,11 @@ describe("record disposition", () => {
     const api = await ready(installFakeApi());
     const notes = screen.getByLabelText("Disposition notes");
     await userEvent.type(notes, "checked the account holder");
-    await userEvent.click(screen.getByRole("button", { name: "Not Substantiated" }));
+    await userEvent.click(screen.getByRole("button", { name: "No Fraud Found" }));
 
     await waitFor(() => expect(api.count("POST", "/disposition")).toBe(1));
     expect(api.where("POST", "/disposition")[0].body).toEqual({ disposition: "not_substantiated", notes: "checked the account holder" });
-    expect(await screen.findByText(/Recorded: Not Substantiated/)).toBeInTheDocument();
+    expect(await screen.findByText(/Recorded: No Fraud Found/)).toBeInTheDocument();
     expect(notes).toHaveValue("");
     expect(api.count("GET", /\/api\/claims$/)).toBeGreaterThanOrEqual(2); // queue refreshed
   });
@@ -238,7 +238,7 @@ describe("record disposition", () => {
   it("keeps the notes and shows the error when recording fails", async () => {
     await ready(installFakeApi({ "POST /api/claims/:id/disposition": () => { throw new HttpError(400, { error: "notes too long" }); } }));
     await userEvent.type(screen.getByLabelText("Disposition notes"), "keep me");
-    await userEvent.click(screen.getByRole("button", { name: "Not Substantiated" }));
+    await userEvent.click(screen.getByRole("button", { name: "No Fraud Found" }));
     expect(await screen.findByText("notes too long")).toBeInTheDocument();
     expect(screen.getByLabelText("Disposition notes")).toHaveValue("keep me");
   });

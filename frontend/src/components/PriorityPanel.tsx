@@ -1,5 +1,5 @@
 import type { Report } from "../types";
-import { BAND_COLOR, FACTOR_LABEL } from "../ui";
+import { BAND_COLOR, FACTOR_LABEL, POLICY_CHECK_FAILED } from "../ui";
 
 interface Props {
   report: Report | null;
@@ -7,11 +7,13 @@ interface Props {
   originalScore?: number;
   excludedLabel?: string;
   loading: boolean;
+  /** Names of the ordinary policy checks the claim failed (empty or undefined = none failed). */
+  failedChecks?: string[];
 }
 
 const ARC = Math.PI * 70;
 
-export default function PriorityPanel({ report, originalScore, excludedLabel, loading }: Props) {
+export default function PriorityPanel({ report, originalScore, excludedLabel, loading, failedChecks }: Props) {
   const score = report?.score ?? 0;
   const color = BAND_COLOR[report?.band ?? "Low"] ?? "#64748b";
   const delta = originalScore !== undefined ? score - originalScore : 0;
@@ -27,6 +29,21 @@ export default function PriorityPanel({ report, originalScore, excludedLabel, lo
           </span>
         )}
       </header>
+
+      {!!failedChecks?.length && (
+        <div className="coverage" role="note" aria-label="Coverage check">
+          <strong>Coverage check failed</strong>
+          <ul>
+            {failedChecks.map((c) => (
+              <li key={c}>{POLICY_CHECK_FAILED[c] ?? c.replaceAll("_", " ")}</li>
+            ))}
+          </ul>
+          <p className="small">
+            This is an ordinary coverage question for claims handling, decided outside this tool. It is not evidence of fraud, so it does
+            not change the investigation priority below, which only measures how this claim is connected to others in the graph.
+          </p>
+        </div>
+      )}
 
       <div className={`gauge ${loading ? "faded" : ""}`}>
         <svg viewBox="0 0 160 96" role="img" aria-label={`Priority score ${score} out of 100`}>

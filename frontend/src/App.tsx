@@ -297,7 +297,9 @@ export default function App() {
               <strong>{detail.claim_id}</strong>
               <span>{money(detail.amount)}</span>
               <span>{detail.loss_type ?? "collision"}</span>
-              <span className={`chip ${detail.policy_check_status === "passed" ? "chip-ok" : ""}`}>Policy checks {detail.policy_check_status}</span>
+              <span className={`chip ${detail.policy_check_status === "passed" ? "chip-ok" : detail.policy_check_status === "failed" ? "chip-bad" : ""}`}>
+                Policy checks {detail.policy_check_status}
+              </span>
             </div>
           )}
           {meta?.demo_reset_available && (
@@ -373,6 +375,7 @@ export default function App() {
 
         <div className="right">
           <PriorityPanel
+            failedChecks={detail?.claim_id === selected ? detail?.policy_checks?.filter((c) => !c.passed).map((c) => c.name) : undefined}
             report={shown}
             originalScore={cf ? cf.original.score : undefined}
             excludedLabel={excluded ? (CATEGORY_LABEL[excluded] ?? excluded) : undefined}

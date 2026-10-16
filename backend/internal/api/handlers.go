@@ -122,8 +122,20 @@ func (s *Server) handleGetClaim(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, struct {
 		*claims.Claim
-		Decision *disposition.Case `json:"recorded_decision,omitempty"`
-	}{c, decision})
+		Decision     *disposition.Case    `json:"recorded_decision,omitempty"`
+		PolicyChecks []ingest.PolicyCheck `json:"policy_checks,omitempty"`
+	}{c, decision, policyChecks(c)})
+}
+
+// policyChecks re-runs the ordinary intake checks on the stored claim and policy, with the
+// same code as intake, so the UI can say WHICH check failed (only the overall status is stored).
+func policyChecks(c *claims.Claim) []ingest.PolicyCheck {
+	if c.Policy == nil {
+		return nil
+	}
+	f := ingest.FNOL{PolicyStatus: c.Policy.Status, PolicyStart: c.Policy.Start, PolicyEnd: c.Policy.End,
+		IncidentDate: c.IncidentDate, Amount: int(c.Amount)}
+	return f.PolicyChecks()
 }
 
 // GET /api/claims/{id}/investigation?hops=N — related claims, evidence paths,

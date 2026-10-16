@@ -35,7 +35,48 @@ func analyze(g *falkordb.Graph, claimID string, maxHops int, exclude string) (*R
 	if err != nil {
 		return nil, err
 	}
-	return ComputeWithPolicies(res, cases, policies), nil
+	household, err := householdMembers(g, res)
+	if err != nil {
+		return nil, err
+	}
+	return ComputeWithHousehold(res, cases, policies, household), nil
+}
+
+// cypherHousehold marks the connected claims filed by the target's own claimant or by a
+// claimant who lives at one of the target claimant's addresses.
+const cypherHousehold = `
+	MATCH (t:Claim {claim_id:$id})-[:FILED_BY]->(k0:Claimant)
+	OPTIONAL MATCH (k0)-[:RESIDES_AT]->(a:Address)
+	WITH k0, collect(a.address_id) AS home
+	MATCH (c:Claim)-[:FILED_BY]->(k:Claimant) WHERE c.claim_id IN $ids
+	OPTIONAL MATCH (k)-[:RESIDES_AT]->(a2:Address)
+	WITH c, k, k0, home, collect(a2.address_id) AS theirs
+	WHERE ID(k) = ID(k0) OR any(x IN theirs WHERE x IN home)
+	RETURN c.claim_id AS id`
+
+// householdMembers returns the connected claims that belong to the target claimant's own
+// household: filed by the same claimant, or by someone at the same address.
+func householdMembers(g *falkordb.Graph, res *investigate.Result) (map[string]bool, error) {
+	connected := connectedClaims(res)
+	out := map[string]bool{}
+	if len(connected) == 0 {
+		return out, nil
+	}
+	ids := make([]any, 0, len(connected))
+	for _, c := range connected {
+		ids = append(ids, c.ClaimID)
+	}
+	r, err := g.ROQuery(cypherHousehold, map[string]any{"id": res.TargetClaim, "ids": ids}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("household query: %w", err)
+	}
+	for r.Next() {
+		v, _ := r.Record().Get("id")
+		if id, ok := v.(string); ok {
+			out[id] = true
+		}
+	}
+	return out, nil
 }
 
 // cypherPolicyAges reads each claim's policy start and incident date.

@@ -196,13 +196,41 @@ describe("returning to a decided claim", () => {
     expect(box).toHaveTextContent("“waiting for the bank”");
 
     await userEvent.type(screen.getByLabelText("Disposition notes"), "holder confirmed");
-    await userEvent.click(screen.getByRole("button", { name: "Not Substantiated" }));
-    await waitFor(() => expect(screen.getByLabelText("Recorded decision")).toHaveTextContent("Not Substantiated"));
+    await userEvent.click(screen.getByRole("button", { name: "No Fraud Found" }));
+    await waitFor(() => expect(screen.getByLabelText("Recorded decision")).toHaveTextContent("No Fraud Found"));
     expect(screen.getByLabelText("Recorded decision")).toHaveTextContent("“holder confirmed”");
   });
 
   it("shows no decision box for a claim nobody has decided", async () => {
     await ready(installFakeApi());
     expect(screen.queryByLabelText("Recorded decision")).not.toBeInTheDocument();
+  });
+});
+
+describe("failed ordinary policy checks", () => {
+  it("are shown as a coverage issue, separate from the investigation priority", async () => {
+    await ready(
+      installFakeApi({
+        "GET /api/claims/:id": (_c, p) => ({
+          ...summary(p.id, { policy_check_status: "failed" }),
+          policy_checks: [
+            { name: "policy_active", passed: false },
+            { name: "incident_within_coverage_period", passed: true },
+            { name: "amount_within_limit", passed: true },
+          ],
+        }),
+      }),
+    );
+    const note = await screen.findByRole("note", { name: "Coverage check" });
+    expect(note).toHaveTextContent("Coverage check failed");
+    expect(note).toHaveTextContent("The policy is not active (lapsed or cancelled)");
+    expect(note).not.toHaveTextContent("payout limit");
+    expect(note).toHaveTextContent("not evidence of fraud");
+    expect(screen.getByText("Policy checks failed")).toHaveClass("chip-bad");
+  });
+
+  it("show nothing extra when every check passed", async () => {
+    await ready(installFakeApi());
+    expect(screen.queryByRole("note", { name: "Coverage check" })).not.toBeInTheDocument();
   });
 });

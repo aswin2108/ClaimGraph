@@ -4,6 +4,7 @@ import type { GraphView } from "../types";
 import { CATEGORY_COLOR, CATEGORY_LABEL, ENTITY_LABEL, reducedMotion } from "../ui";
 import { GRAPH_STYLE as STYLE } from "./graphStyle";
 import ViewTabs, { type GraphViewMode } from "./ViewTabs";
+import Hint from "./Hint";
 
 interface Props {
   graph: GraphView | null;
@@ -313,9 +314,7 @@ export default function GraphPanel({ graph, hops, onHops, focusClaim, onFocus, e
         <h2>Evidence graph</h2>
         <div className="head-tools">
           {excluded && <span className="chip chip-warn">Ignoring {CATEGORY_LABEL[excluded] ?? excluded}</span>}
-          <span className="hint" tabIndex={0} aria-label={HOP_HELP}>
-            ?<span className="hint-pop" role="tooltip">{HOP_HELP}</span>
-          </span>
+          <Hint text={HOP_HELP} />
           <label className="select">
             <span>Max hops</span>
             <select value={hops} onChange={(e) => onHops(Number(e.target.value))}>

@@ -415,3 +415,26 @@ func TestClaimDetailShowsTheRecordedDecisionWithNotesAndDate(t *testing.T) {
 		t.Fatalf("updated decision: %v", b["recorded_decision"])
 	}
 }
+
+func TestClaimDetailSaysWhichPolicyCheckFailed(t *testing.T) {
+	e := newEnv(t, "claimgraph_test_api_policychecks")
+	e.submit(fnol("PL1", "2026-09-01", map[string]any{"policy_status": "lapsed"}))
+	e.submit(fnol("PL2", "2026-09-01", map[string]any{"amount": 60000}))
+	e.submit(fnol("PL3", "2026-09-01", nil))
+	want := map[string]map[string]bool{
+		"PL1": {"policy_active": false, "incident_within_coverage_period": true, "amount_within_limit": true},
+		"PL2": {"policy_active": true, "incident_within_coverage_period": true, "amount_within_limit": false},
+		"PL3": {"policy_active": true, "incident_within_coverage_period": true, "amount_within_limit": true},
+	}
+	for id, checks := range want {
+		_, b, _ := e.do("GET", "/api/claims/"+id, nil)
+		got := map[string]bool{}
+		for _, c := range b["policy_checks"].([]any) {
+			m := c.(map[string]any)
+			got[m["name"].(string)] = m["passed"].(bool)
+		}
+		if fmt.Sprint(got) != fmt.Sprint(checks) {
+			t.Errorf("%s: checks %v, want %v (status %v)", id, got, checks, b["policy_check_status"])
+		}
+	}
+}

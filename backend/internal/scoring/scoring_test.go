@@ -108,7 +108,7 @@ func TestScenarioScores(t *testing.T) {
 			mk("T", "2026-09-10", payout("P"), device("D")), mk("B", "2026-07-01", payout("P"), device("D")),
 			mk("C", "2026-05-01", payout("P"), device("D")), mk("D1", "2026-03-01", payout("P"), device("D"))}, nil, 70, BandHigh},
 		{"T05 device+address, one within 7d", []*ingest.FNOL{
-			mk("T", "2026-09-10", device("D"), addr("A")), mk("B", "2026-09-12", device("D"), addr("A"))}, nil, 45, BandReview}, // v2: household-explained
+			mk("T", "2026-09-10", device("D"), addr("A")), mk("B", "2026-09-12", device("D"), addr("A"))}, nil, 30, BandReview}, // v3: one household, no breadth/timing
 		{"T06 payout/device + older confirmed-fraud case", []*ingest.FNOL{
 			mk("T", "2026-09-10", payout("P"), device("D")), mk("B", "2026-07-01", payout("P"), device("D"))},
 			[]caseSpec{{"B", "confirmed_fraud"}}, 75, BandHigh},
@@ -123,7 +123,7 @@ func TestScenarioScores(t *testing.T) {
 			mk("C", "2026-02-01", pubIP("203.0.113.7")), mk("D1", "2026-03-01", pubIP("203.0.113.7")),
 			mk("E", "2026-04-01", pubIP("203.0.113.7"))}, nil, 18, BandLow},
 		{"T14 joint payout + address household", []*ingest.FNOL{
-			mk("T", "2026-09-10", payout("P"), addr("A")), mk("B", "2026-07-01", payout("P"), addr("A"))}, nil, 40, BandReview}, // v2: household-explained
+			mk("T", "2026-09-10", payout("P"), addr("A")), mk("B", "2026-07-01", payout("P"), addr("A"))}, nil, 35, BandReview}, // v3: one household, no breadth
 		{"T15 company IP + busy shop within 7d", []*ingest.FNOL{
 			mk("T", "2026-09-10", pubIP("198.51.100.4"), shop("S")), mk("B", "2026-09-11", pubIP("198.51.100.4"), shop("S")),
 			mk("C", "2026-09-12", pubIP("198.51.100.4"), shop("S")), mk("D1", "2026-09-13", pubIP("198.51.100.4"), shop("S"))}, nil, 36, BandReview},

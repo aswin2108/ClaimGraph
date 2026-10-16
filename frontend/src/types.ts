@@ -47,6 +47,7 @@ export interface RecordedDecision {
 
 export interface ClaimDetail extends ClaimSummary {
   recorded_decision?: RecordedDecision; // latest outcome with notes and date (UI only; never sent to the model)
+  policy_checks?: { name: string; passed: boolean }[]; // the ordinary intake checks, re-run on the stored policy
   loss_type?: string;
   incident_location?: string;
   claimant?: Entity;

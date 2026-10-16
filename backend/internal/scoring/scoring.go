@@ -117,6 +117,10 @@ type Report struct {
 	// claimant's own address (a joint account, a family phone or device), so the
 	// multi-signal bonus is withheld. The category points still count.
 	HouseholdExplained bool `json:"household_explained"`
+	// HouseholdUnit: the household rule applied; HouseholdClaims earned no breadth, timing,
+	// burst or new-policy points (they are the claimant's own or co-residents' claims).
+	HouseholdUnit   bool     `json:"household_unit"`
+	HouseholdClaims []string `json:"household_claims,omitempty"`
 }
 
 // Band classifies a score.
@@ -147,6 +151,21 @@ func Compute(res *investigate.Result, cases []PriorCase) *Report {
 // and connected claims) to the number of days between its policy start and its incident.
 // Claims without an entry never trigger the new-policy signal.
 func ComputeWithPolicies(res *investigate.Result, cases []PriorCase, policyDays map[string]int) *Report {
+	return ComputeWithHousehold(res, cases, policyDays, nil)
+}
+
+// ComputeWithHousehold is ComputeWithPolicies with the target's household: the connected
+// claims filed by the target's own claimant or by someone at the same address (nil = unknown,
+// then the household rule is not applied).
+//
+// Household rule: when the target's strong evidence stays inside its household (every claim
+// that shares a payout account, device or phone with it, and every claim linked to it by
+// strong evidence at any depth, is a household member), the household counts as one unit:
+// its members add no breadth, timing, burst or new-policy points. The shared payout account,
+// address, device or phone still earns its category points. A ring's chain reaches claimants
+// at other addresses, so the rule never applies to it (20k book: 156/156 planted-ring claims
+// unchanged, random claims scored High 11.9% -> 2.8%).
+func ComputeWithHousehold(res *investigate.Result, cases []PriorCase, policyDays map[string]int, household map[string]bool) *Report {
 	r := &Report{
 		TargetClaim: res.TargetClaim, ExcludedCategory: res.ExcludedCategory,
 		Investigation: res, Factors: []Factor{}, PriorCases: cases, Uncertainty: []string{},
@@ -228,6 +247,38 @@ func ComputeWithPolicies(res *investigate.Result, cases []PriorCase, policyDays 
 		total += d.Points
 		if strongCategories[d.Category] {
 			strong++
+		}
+	}
+
+	// Household rule (see ComputeWithHousehold).
+	if household != nil && strong >= 1 {
+		inside := true
+		for _, cat := range []string{investigate.CatPayout, investigate.CatDevice, investigate.CatContact} {
+			if o := seen[cat]; o != nil {
+				for c := range o.claims {
+					if !household[c] {
+						inside = false
+					}
+				}
+			}
+		}
+		for _, c := range connected {
+			if c.Strong && !household[c.ClaimID] {
+				inside = false
+			}
+		}
+		if inside {
+			var kept []investigate.ConnectedClaim
+			for _, c := range connected {
+				if household[c.ClaimID] {
+					r.HouseholdClaims = append(r.HouseholdClaims, c.ClaimID)
+				} else {
+					kept = append(kept, c)
+				}
+			}
+			sort.Strings(r.HouseholdClaims)
+			r.HouseholdUnit = len(r.HouseholdClaims) > 0
+			connected = kept
 		}
 	}
 
@@ -354,6 +405,11 @@ func ComputeWithPolicies(res *investigate.Result, cases []PriorCase, policyDays 
 		r.Uncertainty = append(r.Uncertainty,
 			"Every shared payout account, device or phone is shared only with people at the claimant's own address, which a household or joint account explains; the multi-signal bonus was not applied.")
 	}
+	if r.HouseholdUnit {
+		r.Uncertainty = append(r.Uncertainty, fmt.Sprintf(
+			"All strong evidence stays inside one household: %d connected claim(s) are filed by this claimant or by people at the same address, so the household counts as one unit and they add no breadth, timing, burst or new-policy points.",
+			len(r.HouseholdClaims)))
+	}
 	for _, l := range res.InfrastructureLinks {
 		if investigate.ContextOnly(l.Category) {
 			r.Uncertainty = append(r.Uncertainty, fmt.Sprintf(
@@ -441,7 +497,7 @@ func uncertaintyNotes(seen map[string]*obs, cases []PriorCase, related int) []st
 	for _, c := range cases {
 		switch c.Disposition {
 		case "not_substantiated":
-			notes = append(notes, fmt.Sprintf("Prior case %s on %s was not substantiated; it earns no score and is context only.", c.CaseID, c.ClaimID))
+			notes = append(notes, fmt.Sprintf("Prior case %s on %s was closed as no fraud found (not substantiated); it earns no score and is context only.", c.CaseID, c.ClaimID))
 		case "needs_info":
 			notes = append(notes, fmt.Sprintf("Prior case %s on %s is unresolved (needs more information); it earns no score.", c.CaseID, c.ClaimID))
 		}

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, ApiError } from "../api";
 import type { FNOL, FNOLResult } from "../types";
-import { money } from "../ui";
+import { money, POLICY_CHECK_LABEL as CHECK_LABEL } from "../ui";
 import { newClaimId, type Preset } from "../presets";
 
 interface Props {
@@ -10,12 +10,6 @@ interface Props {
   onSubmitted: (id: string) => void;
   onOpenRing: (claimId: string) => void;
 }
-
-const CHECK_LABEL: Record<string, string> = {
-  policy_active: "Policy is active",
-  incident_within_coverage_period: "Incident date is within the policy period",
-  amount_within_limit: "Amount is within the policy payout limit",
-};
 
 const OPTIONAL: (keyof FNOL)[] = ["incident_location", "loss_type", "tow_provider_id", "contact_type", "contact_value", "address_id", "device_id", "ip_address"];
 

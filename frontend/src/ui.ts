@@ -53,7 +53,7 @@ export const ENTITY_LABEL: Record<string, string> = {
 
 export const DISPOSITION_LABEL: Record<string, string> = {
   confirmed_fraud: "Confirmed Fraud",
-  not_substantiated: "Not Substantiated",
+  not_substantiated: "No Fraud Found", // stored value stays not_substantiated: nothing sufficient was found (not proof of innocence)
   needs_info: "Needs More Information",
 };
 
@@ -88,4 +88,16 @@ export const RING_INDICATOR_SHORT: Record<string, string> = {
   filing_burst: "Burst",
   new_policies: "New policies",
   confirmed_case: "Confirmed",
+};
+
+/** The ordinary intake checks (ingest.PolicyChecks): what each one checks, and what its failure means. */
+export const POLICY_CHECK_LABEL: Record<string, string> = {
+  policy_active: "Policy is active",
+  incident_within_coverage_period: "Incident date is within the policy period",
+  amount_within_limit: "Amount is within the policy payout limit",
+};
+export const POLICY_CHECK_FAILED: Record<string, string> = {
+  policy_active: "The policy is not active (lapsed or cancelled)",
+  incident_within_coverage_period: "The incident date is outside the policy period",
+  amount_within_limit: "The amount is above the policy payout limit",
 };

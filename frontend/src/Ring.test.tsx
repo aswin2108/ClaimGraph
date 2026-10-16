@@ -141,7 +141,7 @@ describe("claim ring (algo.WCC + algo.MSF)", () => {
 
   it("recording a disposition refreshes the ring (its recorded cases changed)", async () => {
     const api = await ready(installFakeApi());
-    await userEvent.click(screen.getByRole("button", { name: "Not Substantiated" }));
+    await userEvent.click(screen.getByRole("button", { name: "No Fraud Found" }));
     await waitFor(() => expect(api.count("POST", "/disposition")).toBe(1));
     await waitFor(() => expect(api.count("GET", /\/ring$/)).toBe(2));
   });
@@ -190,7 +190,7 @@ describe("ring queue (book-wide algo.WCC, review order)", () => {
     const api = await ready(installFakeApi());
     await userEvent.click(screen.getByRole("tab", { name: "Rings" }));
     await rings().findByRole("button", { name: /^RING-CLM-1,/ });
-    await userEvent.click(screen.getByRole("button", { name: "Not Substantiated" }));
+    await userEvent.click(screen.getByRole("button", { name: "No Fraud Found" }));
     await waitFor(() => expect(api.count("GET", "/api/rings")).toBe(2));
     await userEvent.click(screen.getByRole("button", { name: "Submit synthetic FNOL" }));
     await waitFor(() => expect(api.count("GET", "/api/rings")).toBe(3));

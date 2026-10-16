@@ -243,6 +243,29 @@ p.center {
   background: #dcfce7;
   color: #166534;
 }
+.chip-bad {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.coverage {
+  border: 1px solid #fecaca;
+  background: #fff7f7;
+  border-radius: 12px;
+  padding: 9px 12px;
+  margin-bottom: 10px;
+  color: #7f1d1d;
+}
+.coverage strong {
+  display: block;
+  color: #991b1b;
+}
+.coverage ul {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+.coverage p {
+  color: var(--text);
+}
 .chip-warn {
   background: #fef3c7;
   color: #92400e;
@@ -667,12 +690,9 @@ p.center {
   cursor: help;
 }
 .hint-pop {
-  display: none;
-  position: absolute;
-  top: 24px;
-  right: -8px;
-  width: 300px;
-  z-index: 20;
+  position: fixed; /* rendered into <body> by Hint.tsx, clamped to the window */
+  z-index: 60;
+  pointer-events: none;
   background: rgba(30, 27, 75, 0.95);
   color: #fff;
   font-weight: 400;
@@ -681,10 +701,6 @@ p.center {
   padding: 10px 12px;
   border-radius: 12px;
   text-align: left;
-}
-.hint:hover .hint-pop,
-.hint:focus .hint-pop {
-  display: block;
 }
 .select {
   display: inline-flex;

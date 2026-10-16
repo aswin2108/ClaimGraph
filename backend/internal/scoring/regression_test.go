@@ -175,3 +175,55 @@ func TestDirectLinksCutFromTheListStillScore(t *testing.T) {
 		t.Fatalf("both direct categories must score (payout %d, shop %d): %+v", pts[FSharedPayout], pts[FSharedRepair], r.Factors)
 	}
 }
+
+// A household (same address, joint account, same week) counts as one unit: its shared
+// identifiers keep their points, but its members add no breadth or timing points. As soon
+// as strong evidence leaves the household (a ring's chain), the rule no longer applies.
+func TestHouseholdCountsAsOneUnit(t *testing.T) {
+	g := scratch(t, "claimgraph_test_scoring_household")
+	claimant := func(id string) mod { return func(f *ingest.FNOL) { f.ClaimantID = id } }
+	load(t, g, []*ingest.FNOL{
+		// household at ADDR-H: H1 (target), H2, H3 share the joint account; H1's claimant also filed H4
+		mk("H1", "2026-09-10", payout("PAY-JOINT"), addr("ADDR-H"), claimant("DRV-HOME")),
+		mk("H2", "2026-09-08", payout("PAY-JOINT"), addr("ADDR-H")),
+		mk("H3", "2026-09-07", payout("PAY-JOINT"), addr("ADDR-H")),
+		mk("H4", "2026-09-05", addr("ADDR-H"), claimant("DRV-HOME")),
+		// chain: R1 shares an address with R2, and R2's phone leads to R3 at another address
+		mk("R1", "2026-09-10", addr("ADDR-R")),
+		mk("R2", "2026-09-09", addr("ADDR-R"), phone("+1-555-0901")),
+		mk("R3", "2026-09-08", addr("ADDR-OTHER"), phone("+1-555-0901")),
+	}, nil)
+
+	r, err := Analyze(g, "H1", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pts := map[string]int{}
+	for _, f := range r.Factors {
+		pts[f.Name] = f.Points
+	}
+	if !r.HouseholdUnit || fmt.Sprint(r.HouseholdClaims) != "[H2 H3 H4]" {
+		t.Fatalf("H2, H3 and the claimant's own H4 are the household: unit=%v %v", r.HouseholdUnit, r.HouseholdClaims)
+	}
+	if pts[FSharedPayout] != PtsPayout || pts[FSharedAddress] != PtsAddress || pts[FClaimBreadth] != 0 || pts[FTemporal] != 0 {
+		t.Fatalf("household: categories count, breadth and timing do not: %+v", r.Factors)
+	}
+	if r.ConnectedClaims != 3 {
+		t.Fatalf("the household claims are still reported as connected: %d", r.ConnectedClaims)
+	}
+	if !strings.Contains(strings.Join(r.Uncertainty, " "), "inside one household") {
+		t.Errorf("the report must explain the household rule: %v", r.Uncertainty)
+	}
+
+	chain, err := Analyze(g, "R1", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cp := map[string]int{}
+	for _, f := range chain.Factors {
+		cp[f.Name] = f.Points
+	}
+	if chain.HouseholdUnit || cp[FClaimBreadth] != 2*PtsPerClaim || cp[FTemporal] != PtsTemporal {
+		t.Fatalf("strong evidence that leaves the household (R2 -> R3) keeps breadth and timing: unit=%v %+v", chain.HouseholdUnit, chain.Factors)
+	}
+}
