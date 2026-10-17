@@ -8,7 +8,7 @@ export const CATEGORY_LABEL: Record<string, string> = {
   repair_shop: "Repair shop",
   public_ip: "Public IP",
   vendor_payout: "Vendor settlement account",
-  public_device: "Public device",
+  public_device: "Shared public computer",
   private_ip: "Private network IP",
   tow_provider: "Tow provider",
 };

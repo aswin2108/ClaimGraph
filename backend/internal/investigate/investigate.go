@@ -113,7 +113,7 @@ const (
 	OutcomeNoConnection       = "no_supporting_connection"
 )
 
-const infrastructureOnlyMessage = "This claim is linked to others only through shared infrastructure or context-only identifiers (a busy repair shop, carrier IP, kiosk, company network or repair vendor's settlement account); no claim is connected through evidence specific to it."
+const infrastructureOnlyMessage = "This claim is linked to others only through shared infrastructure or context-only identifiers (a busy repair shop, carrier IP, shared public computer, company network or repair vendor's settlement account); no claim is connected through evidence specific to it."
 
 // setOutcome states what the investigation found.
 func setOutcome(res *Result) {

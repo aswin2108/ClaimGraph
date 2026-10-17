@@ -60,7 +60,7 @@ const OUTCOME: Record<string, { title: string; body: string }> = {
   },
   infrastructure_only: {
     title: "Linked only through shared infrastructure",
-    body: "Every link runs through infrastructure many unrelated claims use (a busy shop, a carrier IP) or a context-only identifier (a vendor settlement account, a kiosk, a company network). They are reported, but their users are not treated as connections.",
+    body: "Every link runs through infrastructure many unrelated claims use (a busy shop, a carrier IP) or a context-only identifier (a vendor settlement account, a shared public computer, a company network). They are reported, but their users are not treated as connections.",
   },
 };
 

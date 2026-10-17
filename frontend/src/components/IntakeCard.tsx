@@ -103,7 +103,7 @@ function EditDialog({ draft, setDraft, onClose, onRestore }: { draft: FNOL; setD
           <Field label="Device id">{text("device_id")}</Field>
           <label className="ff check">
             <input type="checkbox" checked={!!draft.device_is_public} onChange={(e) => setDraft({ ...draft, device_is_public: e.target.checked })} />
-            <span>Public device (kiosk)</span>
+            <span>Shared public computer</span>
           </label>
         </div>
         <footer className="modal-foot">

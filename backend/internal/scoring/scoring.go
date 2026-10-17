@@ -529,6 +529,6 @@ func keys(m map[string]bool) []string {
 
 var contextLabel = map[string]string{
 	investigate.CatVendorPayout: "a repair vendor's settlement account",
-	investigate.CatPublicDevice: "a public device such as a kiosk",
+	investigate.CatPublicDevice: "a shared public computer (for example at a shop counter)",
 	investigate.CatPrivateIP:    "a private or company-network IP",
 }
