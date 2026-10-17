@@ -35,7 +35,7 @@ export const FACTOR_LABEL: Record<string, string> = {
   shared_public_ip: "Shared public IP",
   connected_claims_breadth: "Connected-claim breadth",
   temporal_proximity: "Filed within 7 days",
-  confirmed_fraud_history: "Confirmed outcome on a related claim",
+  confirmed_fraud_history: "Confirmed fraud on an earlier linked or own claim",
   multi_signal_reinforcement: "Independent signals reinforce each other",
   claim_burst: "Linked claims filed in a burst (90 days)",
   new_policy_cluster: "Linked claims on new policies",

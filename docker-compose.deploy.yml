@@ -1,0 +1,45 @@
+# ClaimGraph — public demo on one Linux server (adds HTTPS + per-visitor limits to docker-compose.yml).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.deploy.yml up -d --build
+#
+# Needs a .env file next to this one with SITE_ADDRESS (the public hostname); see deploy/README.md.
+# Only Caddy is published to the internet (80/443). FalkorDB, its Browser, the API and the web container
+# keep their 127.0.0.1-only ports from docker-compose.yml, so they are never reachable from outside.
+
+services:
+  api:
+    environment:
+      # Lower LLM budget than local runs: the agent button is public. When spent, runs return the
+      # deterministic explanation without calling the model.
+      AGENT_MAX_RUNS_PER_HOUR: ${AGENT_MAX_RUNS_PER_HOUR:-10}
+      AGENT_DAILY_TOKEN_BUDGET: ${AGENT_DAILY_TOKEN_BUDGET:-300000}
+
+  web:
+    # Same image; the public config adds per-IP rate limits (deploy/nginx.public.conf).
+    volumes:
+      - ./deploy/nginx.public.conf:/etc/nginx/conf.d/default.conf:ro
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    depends_on:
+      web:
+        condition: service_healthy
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?set SITE_ADDRESS in .env (see deploy/README.md)}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:

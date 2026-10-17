@@ -8,6 +8,8 @@ Built for [Graph Hacks: Context for AI Agents](https://www.wemakedevs.org/hackat
 
 - **The Solution:** ClaimGraph is an investigation copilot for insurance fraud teams. A new auto claim comes in, FalkorDB finds how it connects to every other claim through shared payout accounts, devices, phones and addresses, and the investigator gets a priority score in which every point traces back to a real path in the graph. A graph database stores the links between claims, so they are easy to find. A bounded AI agent explains the findings. A human makes every decision.
 
+**Live demo: [https://139-59-13-125.sslip.io](https://139-59-13-125.sslip.io)**. Everyone shares one demo graph: if the showcase claim is already closed, click **Reset demo** (top right, twice). To run it yourself, see [Quick start](#quick-start-about-2-minutes).
+
 <p align="center"><img src="docs/images/traversal.gif" alt="Traversal replay: evidence grows hop by hop out of the new claim" width="640"></p>
 <p align="center"><sub>A claim that passed every ordinary policy check, traced 3 hops into a fraud ring. Each hop is a real FalkorDB path.</sub></p>
 
@@ -38,7 +40,7 @@ Built for [Graph Hacks: Context for AI Agents](https://www.wemakedevs.org/hackat
 1. **A new claim comes in.** The insurer receives the first report of a claim, called the FNOL (_first notice of loss_). The usual checks run: is the policy active, did the accident happen while it was active, is the amount within the limit? A claim from a fraud ring can pass all three. If the new claim joins a known ring, an alert appears straight away.
 2. **It is saved as a graph.** The claim and everything attached to it (the person, the bank account to pay, phone, device, address, repair shop, IP address) are stored in FalkorDB as nodes joined by relationships.
 3. **The graph is searched.** FalkorDB follows the links from the new claim up to 3 steps ("hops") away, for example: claim → shared bank account → another claim → shared address → a third claim. This search runs inside FalkorDB using fixed Cypher queries written in Go. The claim id is passed in as a parameter, and the AI never writes a query. The **Show Cypher** button in the app displays the exact queries.
-4. **The whole ring is found.** FalkorDB's built-in graph algorithms look beyond 3 hops: `algo.WCC` finds every claim in the group, `algo.MSF` draws the strongest links that hold the group together, and `algo.SPpaths` finds the strongest chain of evidence between any two claims.
+4. **The whole ring is found.** FalkorDB's built-in graph algorithms look beyond 3 hops: `algo.WCC` finds every claim in the group, `algo.MSF` draws the strongest links that hold the group together, and `algo.SPpaths` finds the strongest chain of evidence between any two claims. A **ring** here means a group of claims tied together by strong evidence (bank account, private device, phone/email, address), at any depth. It is a lead for review, not proof of fraud; a family sharing one address can form a ring too.
 5. **A score explains it.** The claim gets a 0–100 priority score. Every point comes from a fixed rule (for example +25 for a shared bank account) and points to the exact link in the graph. No AI is used for the score.
 6. **An AI agent writes the summary.** When the investigator asks, one AI agent (Gemini) connects to ClaimGraph's tools through **MCP** (Model Context Protocol, the standard way AI agents find and use tools). It chooses from [8 tools](#the-tools), reads the graph, and writes a plain-English summary and next step. Every claim id it mentions is checked against what the tools returned; if anything is wrong, a summary built directly from the graph is shown instead.
 7. **The investigator can test the result.** Remove one kind of evidence (for example the shared repair shop) and see what the score would be without it. The graph itself is never changed.
@@ -131,6 +133,7 @@ flowchart LR
 - A shop or public IP used by more than 20 claims counts once, as infrastructure.
 - A hub with more than 100 links is never expanded past the first hop.
 - A household (the same claimant, or people at the same address) counts as one unit.
+- No person appears twice on a path. Someone's own other claims are never links, at any depth (not even out through a neighbour and back); they are listed separately as _this claimant's other claims_ and add no breadth or timing points (an older one with a confirmed fraud decision still adds +15).
 
 **Score (0–100, investigation priority, not probability of fraud).** Each factor counts once:
 
@@ -138,18 +141,18 @@ flowchart LR
 | --------------------- | --------------------- | ------------------ | -------------- | ------------------ | ---------------- |
 | +25                   | +20                   | +12                | +10            | +8                 | +3               |
 
-Plus: connected claims (+5 each, up to +15), a link filed within 7 days (+10), a confirmed fraud case on an earlier linked claim (+15), two or more independent strong signals (+10), a burst of strongly linked claims within 90 days (+10), and linked claims on brand-new policies (+10). The total is capped at 100. Bands: **0–29 Low**, **30–59 Review**, **60–100 High Priority**.
+Plus: connected claims (+5 each, up to +15), a link filed within 7 days (+10), a confirmed fraud case on an earlier linked claim or on the same claimant's earlier claim (+15), two or more independent strong signals (+10), a burst of strongly linked claims within 90 days (+10), and linked claims on brand-new policies (+10). The total is capped at 100. Bands: **0–29 Low**, **30–59 Review**, **60–100 High Priority**.
 
 **Where points are reduced or not given.** These rules came from testing on the 20,000-claim book, where ordinary sharing produced too many false alarms:
 
-| Situation                                                                                        | What happens                                                                                                                                                                                                |
-| ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Vendor settlement account, shared public computer, company-network IP                            | 0 points, and never a connection.                                                                                                                                                                           |
-| A repair shop or public IP used by more than 20 claims                                           | Counts once (+8 / +3), but its other claims are not connections: no breadth, timing or burst points.                                                                                                        |
-| Two claims by the same person                                                                    | Not linked through their payout, device, shop or IP.                                                                                                                                                        |
-| A household: every strong link stays with the same claimant or people at the claimant's address  | The household counts as one unit: no breadth, timing, burst or new-policy points, and no +10 for two signals. The shared address or joint account itself still counts, with a note that it may be innocent. |
-| Shops and IPs                                                                                    | Never earn burst or new-policy points; only payout, device, phone and address links do.                                                                                                                     |
-| An earlier linked claim decided as _No Fraud Found_ (approved) or still _Needs More Information_ | 0 points; only a confirmed fraud case adds +15.                                                                                                                                                             |
+| Situation                                                                                        | What happens                                                                                                                                                                                                                                                           |
+| ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Vendor settlement account, shared public computer, company-network IP                            | 0 points, and never a connection.                                                                                                                                                                                                                                      |
+| A repair shop or public IP used by more than 20 claims                                           | Counts once (+8 / +3), but its other claims are not connections: no breadth, timing or burst points.                                                                                                                                                                   |
+| Two claims by the same person                                                                    | Never linked, at any depth: not through their own payout, device, shop or IP, and not out through a neighbour and back. They are listed as _this claimant's other claims_ (with any recorded decision). Only an older one decided as confirmed fraud adds points: +15. |
+| A household: every strong link stays with the same claimant or people at the claimant's address  | The household counts as one unit: no breadth, timing, burst or new-policy points, and no +10 for two signals. The shared address or joint account itself still counts, with a note that it may be innocent.                                                            |
+| Shops and IPs                                                                                    | Never earn burst or new-policy points; only payout, device, phone and address links do.                                                                                                                                                                                |
+| An earlier linked claim decided as _No Fraud Found_ (approved) or still _Needs More Information_ | 0 points; only a confirmed fraud case adds +15.                                                                                                                                                                                                                        |
 
 For example, a claim sharing only an address with four neighbours scores **10 (Low)**, and a couple sharing a joint account scores **35 (Review)**. A planted ring still scores High (156 of 156 ring claims).
 
@@ -205,19 +208,19 @@ Every case and its expected score is listed in `Idea.txt` section 7; the tests a
 
 A synthetic book of 20,000 claims (122,455 nodes, 175,527 relationships) with 12 planted fraud rings ([full report](backend/testdata/scale/benchmark.md)):
 
-- All 156 planted-ring claims are **High Priority**. Only 5 of 200 random claims are (2.5%).
+- All 156 planted-ring claims are **High Priority**. Only 4 of 200 random claims are (2%).
 - **12 of 12** planted rings are recovered exactly by `algo.WCC`, and all 12 rank in the top 12 of 2,998 groups.
-- A full investigation takes about 140–185 ms (median). A ring lookup takes 7 ms, a strongest evidence chain 4 ms.
+- A full investigation takes about 150–210 ms (median). A ring lookup takes 7–8 ms, a strongest evidence chain 6 ms.
 
 ## Why FalkorDB: a measured comparison
 
-I asked FalkorDB and PostgreSQL 18 the same questions on the same 20,000-claim book. Both returned identical answers on all 24,264 comparisons ([full report](backend/testdata/scale/benchmark_relational.md)).
+I asked FalkorDB and PostgreSQL 18 the same questions on the same 20,000-claim book. Both returned identical answers on all 5,152 comparisons ([full report](backend/testdata/scale/benchmark_relational.md)).
 
 | Question                              | FalkorDB  | PostgreSQL |                               |
 | ------------------------------------- | --------- | ---------- | ----------------------------- |
-| Every ring in the book                | **85 ms** | 3,405 ms   | **FalkorDB 40× faster**       |
-| Strongest evidence chain at any depth | **7 ms**  | 195 ms     | **FalkorDB 28× faster**       |
-| Connected claims within 1–3 hops      | 24–150 ms | 2–6 ms     | PostgreSQL faster, once tuned |
+| Every ring in the book                | **78 ms** | 3,339 ms   | **FalkorDB 43× faster**       |
+| Strongest evidence chain at any depth | **6 ms**  | 228 ms     | **FalkorDB 36× faster**       |
+| Connected claims within 1–3 hops      | 26–170 ms | 2–5 ms     | PostgreSQL faster, once tuned |
 
 Finding rings across the whole book and the strongest chain at any depth each take one built-in FalkorDB call (`algo.WCC`, `algo.SPpaths`). Plain PostgreSQL needs dozens of full-table iterations for the same answers. For short lookups from a single claim, a tuned relational index is faster; untuned, the same 3-hop SQL took about 650 ms. Both sides are reported.
 
@@ -257,7 +260,7 @@ The MCP server for outside clients (`cmd/mcp`) offers the seven read-only tools 
 - **The score weights are set by hand**, from investigator reasoning (a shared payout account matters more than a shared repair shop). Nothing is learned from data, by design: every point has to be explainable.
 - **Short lookups are not FalkorDB's speed story.** Tuned PostgreSQL answers 1–3 hop questions faster (see above). FalkorDB wins on whole-book rings and any-depth chains, and on returning paths as evidence.
 - **WCC and MSF process the whole strong-evidence graph per call** (about 0.1–0.3 s at 20k claims). Results are cached until the evidence changes.
-- **No authentication.** It is a local demo; everything binds to 127.0.0.1.
+- **No authentication.** Locally everything binds to 127.0.0.1. The public demo adds HTTPS and per-visitor rate limits, but anyone can use it, so it holds synthetic data only.
 - **External MCP clients' answers are not validated.** The built-in agent's output is checked against what the tools returned; an outside client's prose is its own.
 
 ## Run the tests
@@ -290,6 +293,7 @@ backend/    Go (module claimgraph)
 frontend/   React + TypeScript + Vite + Cytoscape.js
 docs/images/  screenshots used here
 docs/BUILD_LOG.md  dated log of decisions, bugs found and verification
+deploy/     public demo: HTTPS (Caddy), per-visitor limits, setup steps (deploy/README.md)
 LICENSE     MIT
 ```
 

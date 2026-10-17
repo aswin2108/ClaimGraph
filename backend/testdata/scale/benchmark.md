@@ -6,31 +6,31 @@ Graph `claimgraph_scale` as seeded (measured on a copy of its pristine snapshot,
 
 | sample | operation | n | p50 | p95 | max | errors |
 |---|---|---|---|---|---|---|
-| planted-ring claims | Analyze (traversal + score + prior cases) | 156 | 184 | 290 | 646 | 0 |
-| planted-ring claims | Counterfactual (exclude repair_shop) | 156 | 361 | 543 | 807 | 0 |
-| planted-ring claims | FindRelatedClaims hops=1 | 156 | 25 | 29 | 41 | 0 |
-| planted-ring claims | FindRelatedClaims hops=2 | 156 | 56 | 72 | 93 | 0 |
-| planted-ring claims | FindRelatedClaims hops=3 | 156 | 168 | 262 | 630 | 0 |
-| planted-ring claims | GetClaimRing (cached WCC/MSF + live facts) | 156 | 7 | 9 | 11 | 0 |
-| busiest-shop claims | Analyze (traversal + score + prior cases) | 50 | 143 | 273 | 546 | 0 |
-| busiest-shop claims | Counterfactual (exclude repair_shop) | 50 | 283 | 516 | 908 | 0 |
-| busiest-shop claims | FindRelatedClaims hops=1 | 50 | 25 | 27 | 29 | 0 |
-| busiest-shop claims | FindRelatedClaims hops=2 | 50 | 52 | 70 | 86 | 0 |
-| busiest-shop claims | FindRelatedClaims hops=3 | 50 | 133 | 266 | 564 | 0 |
-| busiest-shop claims | GetClaimRing (cached WCC/MSF + live facts) | 50 | 7 | 7 | 9 | 0 |
-| random claims | Analyze (traversal + score + prior cases) | 200 | 143 | 427 | 847 | 0 |
-| random claims | Counterfactual (exclude repair_shop) | 200 | 291 | 661 | 1690 | 0 |
-| random claims | FindRelatedClaims hops=1 | 200 | 25 | 29 | 50 | 0 |
-| random claims | FindRelatedClaims hops=2 | 200 | 56 | 80 | 110 | 0 |
-| random claims | FindRelatedClaims hops=3 | 200 | 131 | 407 | 878 | 0 |
-| random claims | GetClaimRing (cached WCC/MSF + live facts) | 200 | 7 | 9 | 16 | 0 |
-| book-wide | GetStrongestLink (algo.SPpaths) across a ring | 12 | 4 | 5 | 7 | 0 |
-| book-wide | ListRings (algo.WCC over the whole book) | 5 | 410 | 415 | 431 | 0 |
-| book-wide | GetClaimRing first call (cold: algo.WCC + algo.MSF over the whole book) | 1 | 1019 | 1019 | 1019 | 0 |
+| planted-ring claims | Analyze (traversal + score + prior cases) | 156 | 210 | 321 | 659 | 0 |
+| planted-ring claims | Counterfactual (exclude repair_shop) | 156 | 427 | 587 | 888 | 0 |
+| planted-ring claims | FindRelatedClaims hops=1 | 156 | 30 | 39 | 92 | 0 |
+| planted-ring claims | FindRelatedClaims hops=2 | 156 | 66 | 83 | 132 | 0 |
+| planted-ring claims | FindRelatedClaims hops=3 | 156 | 187 | 299 | 673 | 0 |
+| planted-ring claims | GetClaimRing (cached WCC/MSF + live facts) | 156 | 8 | 11 | 38 | 0 |
+| busiest-shop claims | Analyze (traversal + score + prior cases) | 50 | 161 | 278 | 430 | 0 |
+| busiest-shop claims | Counterfactual (exclude repair_shop) | 50 | 310 | 497 | 661 | 0 |
+| busiest-shop claims | FindRelatedClaims hops=1 | 50 | 30 | 36 | 87 | 0 |
+| busiest-shop claims | FindRelatedClaims hops=2 | 50 | 60 | 80 | 98 | 0 |
+| busiest-shop claims | FindRelatedClaims hops=3 | 50 | 142 | 251 | 424 | 0 |
+| busiest-shop claims | GetClaimRing (cached WCC/MSF + live facts) | 50 | 7 | 10 | 11 | 0 |
+| random claims | Analyze (traversal + score + prior cases) | 200 | 151 | 306 | 1102 | 0 |
+| random claims | Counterfactual (exclude repair_shop) | 200 | 304 | 548 | 1049 | 0 |
+| random claims | FindRelatedClaims hops=1 | 200 | 29 | 37 | 94 | 0 |
+| random claims | FindRelatedClaims hops=2 | 200 | 61 | 88 | 217 | 0 |
+| random claims | FindRelatedClaims hops=3 | 200 | 135 | 298 | 1244 | 0 |
+| random claims | GetClaimRing (cached WCC/MSF + live facts) | 200 | 7 | 10 | 45 | 0 |
+| book-wide | GetStrongestLink (algo.SPpaths) across a ring | 12 | 6 | 9 | 9 | 0 |
+| book-wide | ListRings (algo.WCC over the whole book) | 5 | 429 | 435 | 516 | 0 |
+| book-wide | GetClaimRing first call (cold: algo.WCC + algo.MSF over the whole book) | 1 | 1061 | 1061 | 1061 | 0 |
 
 Results cut by a limit at hops=3 (flagged `truncated`): planted-ring claims 0/156; busiest-shop claims 0/50; random claims 0/200; 
 
-Claims showing only 5 example paths for some multi-hop connection (presentation cap, no evidence lost): planted-ring claims 83/156; busiest-shop claims 15/50; random claims 62/200; 
+Claims showing only 5 example paths for some multi-hop connection (presentation cap, no evidence lost): planted-ring claims 71/156; busiest-shop claims 7/50; random claims 8/200; 
 
 Claims that use shared infrastructure (a shop, carrier IP, kiosk or vendor account used by more than 20 claims; counted once, not as connections): planted-ring claims 154/156; busiest-shop claims 50/50; random claims 200/200; 
 
@@ -78,8 +78,8 @@ Top of the ring list:
 | sample | Low | Review | High Priority |
 |---|---|---|---|
 | planted-ring claims | 0 | 0 | 156 |
-| busiest-shop claims | 31 | 17 | 2 |
-| random claims | 143 | 52 | 5 |
+| busiest-shop claims | 31 | 18 | 1 |
+| random claims | 145 | 51 | 4 |
 
 The score uses direct (1-transition) evidence only; ring membership beyond that is shown by the ring tools and never changes the score.
 
@@ -93,8 +93,8 @@ The score uses direct (1-transition) evidence only; ring membership beyond that 
 | shared_address | 10 | 28% | 68% | 71% |
 | shared_repair_shop | 8 | 100% | 100% | 100% |
 | shared_public_ip | 3 | 38% | 62% | 52% |
-| connected_claims_breadth | 15 | 100% | 18% | 10% |
-| temporal_proximity | 10 | 97% | 8% | 4% |
+| connected_claims_breadth | 15 | 100% | 16% | 9% |
+| temporal_proximity | 10 | 97% | 6% | 3% |
 | claim_burst | 10 | 96% | 0% | 0% |
 | new_policy_cluster | 10 | 100% | 0% | 0% |
 | confirmed_fraud_history | 15 | 48% | 0% | 0% |

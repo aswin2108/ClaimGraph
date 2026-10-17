@@ -1,0 +1,14 @@
+# HTTPS front door for the public demo. Caddy gets and renews the certificate automatically.
+# SITE_ADDRESS comes from .env (for example 203-0-113-7.sslip.io).
+{$SITE_ADDRESS} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+
+	# Caddy replaces any X-Forwarded-For sent by the visitor with the real client IP,
+	# which nginx then uses for its per-IP limits. No read timeout: agent runs take up to ~90 s.
+	reverse_proxy web:8080
+}
