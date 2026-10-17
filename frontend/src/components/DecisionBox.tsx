@@ -58,20 +58,26 @@ export default function DecisionBox({ claimId, hasReport, canClose, decision, bu
 
   return (
     <div className="decision-box" aria-label="Your decision">
-      <h3>Your decision</h3>
       {decision && (
-        <div className="decision" aria-label="Recorded decision">
-          <div>
-            <strong>{DISPOSITION_LABEL[decision.disposition] ?? decision.disposition}</strong>
-            <span className="muted small">
-              {" "}
-              · recorded {when(decision.recorded_at)}
-              {decision.source && decision.source !== "investigator_simulated" ? " · from the synthetic case history" : ""}
-            </span>
+        <>
+          {/* The latest decision stored on this claim: one made earlier in this app, or part of the synthetic
+              case history the demo book is seeded with. It is not the decision being made below. */}
+          <h3>Already recorded on this claim</h3>
+          <div className="decision" aria-label="Recorded decision">
+            <div>
+              <strong>{DISPOSITION_LABEL[decision.disposition] ?? decision.disposition}</strong>
+              <span className="muted small">
+                {" "}
+                · recorded {when(decision.recorded_at)}
+                {decision.source && decision.source !== "investigator_simulated" ? " · from the synthetic case history" : ""}
+              </span>
+            </div>
+            {decision.notes ? <p className="small">“{decision.notes}”</p> : <p className="muted small">No notes.</p>}
+            <p className="muted tiny">An earlier decision (made before, or part of the demo's synthetic case history). Yours goes below.</p>
           </div>
-          {decision.notes ? <p className="small">“{decision.notes}”</p> : <p className="muted small">No notes.</p>}
-        </div>
+        </>
       )}
+      <h3>Your decision</h3>
       {!hasReport ? (
         <p className="muted small">Run the investigation agent first. Approve, Reject and Need more information appear under its report.</p>
       ) : (

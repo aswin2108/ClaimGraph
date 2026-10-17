@@ -194,6 +194,9 @@ describe("returning to a decided claim", () => {
     expect(box).toHaveTextContent("Needs More Information");
     expect(box).toHaveTextContent("15 Oct 2026");
     expect(box).toHaveTextContent("“waiting for the bank”");
+    // A stored decision is never presented as the one being made now.
+    expect(screen.getByRole("heading", { name: "Already recorded on this claim" })).toBeInTheDocument();
+    expect(box).toHaveTextContent("Yours goes below");
 
     await userEvent.click(screen.getByRole("button", { name: "Run investigation agent" }));
     await userEvent.type(await screen.findByLabelText("Decision reason"), "bank replied, still checking");
