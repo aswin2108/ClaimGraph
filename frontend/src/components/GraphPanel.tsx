@@ -60,6 +60,9 @@ function computeStages(g: GraphView): { stage: Map<string, number>; max: number 
 }
 
 
+// Infrastructure categories that still count once in the score (a busy shop, a public IP); the others are context only.
+const SCORED_ONCE = new Set(["repair_shop", "public_ip"]);
+
 // Growth animation: entities grow out at once, the claims they lead to follow once the entity has landed.
 const GROW_MS = 650;
 const GROW_DELAY_MS = 520;
@@ -190,8 +193,13 @@ export default function GraphPanel({ graph, hops, onHops, focusClaim, onFocus, e
           label: n.label,
           target: n.target ? true : undefined,
           context: n.context ? true : undefined,
+          infrastructure: n.infrastructure ? true : undefined,
+          others: n.other_claims,
           color: CATEGORY_COLOR[n.category ?? ""] ?? "#94a3b8",
-          display: n.kind === "entity" ? `${ENTITY_LABEL[n.type ?? ""] ?? n.type}\n${n.label}` : n.label,
+          display:
+            n.kind === "entity"
+              ? `${ENTITY_LABEL[n.type ?? ""] ?? n.type}\n${n.label}${n.infrastructure ? `\nused by ${(n.other_claims ?? 0).toLocaleString("en-US")} other claims` : ""}`
+              : n.label,
           type: n.type,
           category: n.category,
         },
@@ -236,7 +244,18 @@ export default function GraphPanel({ graph, hops, onHops, focusClaim, onFocus, e
     });
     cy.on("mouseover", "node", (ev) => {
       const d = ev.target.data();
-      if (d.kind === "entity") setHover({ title: `${d.type} ${d.label}`, lines: [CATEGORY_LABEL[d.category] ?? "", d.context ? "Context only — not scored" : ""].filter(Boolean) });
+      if (d.kind === "entity" && d.infrastructure)
+        setHover({
+          title: `${d.type} ${d.label}`,
+          lines: [
+            CATEGORY_LABEL[d.category] ?? "",
+            `Used by ${Number(d.others ?? 0).toLocaleString("en-US")} other claims, so it is shared infrastructure`,
+            SCORED_ONCE.has(d.category)
+              ? "Counts once in the score; its other users are not connections, so they are not drawn"
+              : "Context only — not scored, and its users are not connections",
+          ].filter(Boolean),
+        });
+      else if (d.kind === "entity") setHover({ title: `${d.type} ${d.label}`, lines: [CATEGORY_LABEL[d.category] ?? "", d.context ? "Context only — not scored" : ""].filter(Boolean) });
       else if (d.kind === "claim") setHover({ title: `Claim ${d.label}`, lines: ["Click to trace its evidence path"] });
       else setHover({ title: `Claimant ${d.label}`, lines: [] });
     });

@@ -232,6 +232,9 @@ export interface GraphNode {
   target?: boolean;
   hops?: number;
   context?: boolean;
+  /** Shared infrastructure (busy shop, carrier IP) or a context-only identifier: drawn once, its users are not. */
+  infrastructure?: boolean;
+  other_claims?: number;
 }
 export interface GraphEdge {
   id: string;

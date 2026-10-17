@@ -17,6 +17,11 @@ type GraphNode struct {
 	Target   bool   `json:"target,omitempty"`   // the claim under investigation
 	Hops     *int   `json:"hops,omitempty"`     // claim-to-claim distance from the target
 	Context  bool   `json:"context,omitempty"`  // shown for context only, not part of any evidence path
+	// Infrastructure marks a shared identifier used by many claims (a busy repair shop, a carrier IP)
+	// or a context-only one: drawn once, attached to the target only; its other users are not
+	// connections and are never drawn. OtherClaims is its exact usage count from the graph.
+	Infrastructure bool `json:"infrastructure,omitempty"`
+	OtherClaims    int  `json:"other_claims,omitempty"`
 }
 
 type GraphEdge struct {
@@ -40,8 +45,8 @@ type GraphView struct {
 }
 
 // BuildGraphView converts an investigation result into graph elements. Every node
-// and edge comes from a returned evidence path or a stored tow-provider context
-// link; nothing is invented. tows maps claim ID -> tow provider (context only).
+// and edge comes from a returned evidence path, the target's shared-infrastructure
+// summary or a stored tow-provider context link; nothing is invented. tows maps claim ID -> tow provider (context only).
 func BuildGraphView(res *investigate.Result, tows map[string]claims.Entity) *GraphView {
 	v := &GraphView{TargetClaim: res.TargetClaim, ExcludedCategory: res.ExcludedCategory,
 		Truncated: res.Truncated, Nodes: []GraphNode{}, Edges: []GraphEdge{}}
@@ -85,6 +90,20 @@ func BuildGraphView(res *investigate.Result, tows map[string]claims.Entity) *Gra
 				}
 			}
 		}
+	}
+
+	// Shared infrastructure the target uses (investigate.Result.InfrastructureLinks): one node per
+	// identifier, linked to the target only, with its exact usage count. A busy repair shop still
+	// counts once in the score, so it is shown; its hundreds of other customers are not.
+	for _, l := range res.InfrastructureLinks {
+		ent := "entity:" + l.EntityType + ":" + l.EntityID
+		if _, onPath := nodes[ent]; !onPath {
+			nodes[ent] = GraphNode{ID: ent, Kind: "entity", Label: l.EntityID, Type: l.EntityType, Category: l.Category,
+				Context: true, Infrastructure: true, OtherClaims: l.OtherClaims}
+		}
+		id := "claim:" + res.TargetClaim + "|" + l.Rel + "|" + ent
+		edges[id] = GraphEdge{ID: id, Source: "claim:" + res.TargetClaim, Target: ent, Rel: l.Rel, Category: l.Category,
+			EvidenceID: l.EvidenceID, RecordedAt: l.RecordedAt, Context: true}
 	}
 
 	// Context-only tow providers for the claims shown (never part of scoring).

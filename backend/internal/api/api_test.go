@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"claimgraph/internal/graph"
+	"claimgraph/internal/investigate"
 )
 
 const origin = "http://localhost:5173"
@@ -318,6 +319,48 @@ func TestGraphView(t *testing.T) {
 		m := ed.(map[string]any)
 		if nodeIDs[m["source"].(string)] == nil || nodeIDs[m["target"].(string)] == nil {
 			t.Errorf("edge references a missing node: %v", m)
+		}
+	}
+
+	// A busy repair shop (infrastructure) is drawn once, attached to the target only, with its
+	// exact usage count; none of its other customers is drawn.
+	busy := map[string]any{"repair_shop_id": "SHOP-BUSYG"}
+	e.submit(fnol("B0", "2026-09-10", busy))
+	for i := 0; i < investigate.InfrastructureMinClaims+1; i++ {
+		e.submit(fnol(fmt.Sprintf("BU%02d", i), "2026-08-01", busy))
+	}
+	_, b, _ = e.do("GET", "/api/claims/B0/graph", nil)
+	var shop map[string]any
+	shopEdges, claimsDrawn := 0, 0
+	for _, n := range b["nodes"].([]any) {
+		m := n.(map[string]any)
+		if m["id"] == "entity:RepairShop:SHOP-BUSYG" {
+			shop = m
+		}
+		if m["kind"] == "claim" {
+			claimsDrawn++
+		}
+	}
+	for _, ed := range b["edges"].([]any) {
+		m := ed.(map[string]any)
+		if m["target"] == "entity:RepairShop:SHOP-BUSYG" {
+			shopEdges++
+			if m["source"] != "claim:B0" || m["context"] != true || m["rel"] != "REPAIRED_AT" {
+				t.Errorf("the shop must hang off the target only, as context: %v", m)
+			}
+		}
+	}
+	if shop == nil || shop["infrastructure"] != true || shop["context"] != true ||
+		shop["other_claims"].(float64) != float64(investigate.InfrastructureMinClaims+1) {
+		t.Fatalf("busy shop must be drawn as infrastructure with its exact count: %v", shop)
+	}
+	if shopEdges != 1 || claimsDrawn != 1 {
+		t.Fatalf("only the target and its shop are drawn: %d shop edges, %d claims", shopEdges, claimsDrawn)
+	}
+	_, b, _ = e.do("GET", "/api/claims/B0/graph?exclude=repair_shop", nil)
+	for _, n := range b["nodes"].([]any) {
+		if n.(map[string]any)["id"] == "entity:RepairShop:SHOP-BUSYG" {
+			t.Error("ignoring the repair shop must remove it from the graph too")
 		}
 	}
 
