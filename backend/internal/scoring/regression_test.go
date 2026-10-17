@@ -202,13 +202,18 @@ func TestHouseholdCountsAsOneUnit(t *testing.T) {
 	for _, f := range r.Factors {
 		pts[f.Name] = f.Points
 	}
-	if !r.HouseholdUnit || fmt.Sprint(r.HouseholdClaims) != "[H2 H3 H4]" {
-		t.Fatalf("H2, H3 and the claimant's own H4 are the household: unit=%v %v", r.HouseholdUnit, r.HouseholdClaims)
+	// The claimant's own H4 is not a connected claim (no person twice on a path); it is
+	// listed as the claimant's other claim instead.
+	if !r.HouseholdUnit || fmt.Sprint(r.HouseholdClaims) != "[H2 H3]" {
+		t.Fatalf("H2 and H3 are the household: unit=%v %v", r.HouseholdUnit, r.HouseholdClaims)
+	}
+	if own := r.Investigation.OwnClaims; own == nil || len(own.Claims) != 1 || own.Claims[0].ClaimID != "H4" {
+		t.Fatalf("H4 must be listed as the claimant's own claim: %+v", own)
 	}
 	if pts[FSharedPayout] != PtsPayout || pts[FSharedAddress] != PtsAddress || pts[FClaimBreadth] != 0 || pts[FTemporal] != 0 {
 		t.Fatalf("household: categories count, breadth and timing do not: %+v", r.Factors)
 	}
-	if r.ConnectedClaims != 3 {
+	if r.ConnectedClaims != 2 {
 		t.Fatalf("the household claims are still reported as connected: %d", r.ConnectedClaims)
 	}
 	if !strings.Contains(strings.Join(r.Uncertainty, " "), "inside one household") {
@@ -225,5 +230,45 @@ func TestHouseholdCountsAsOneUnit(t *testing.T) {
 	}
 	if chain.HouseholdUnit || cp[FClaimBreadth] != 2*PtsPerClaim || cp[FTemporal] != PtsTemporal {
 		t.Fatalf("strong evidence that leaves the household (R2 -> R3) keeps breadth and timing: unit=%v %+v", chain.HouseholdUnit, chain.Factors)
+	}
+}
+
+// A claimant's own older claim with a human-confirmed fraud outcome adds +15 (history about the
+// same person), although a person's own claims are never links. A newer own claim, or an
+// outcome other than confirmed_fraud, adds nothing; the claim is never counted as connected.
+func TestOwnOlderConfirmedFraudAddsFifteen(t *testing.T) {
+	g := scratch(t, "claimgraph_test_scoring_own_history")
+	same := func(f *ingest.FNOL) { f.ClaimantID = "DRV-REPEAT" }
+	load(t, g, []*ingest.FNOL{
+		mk("O1", "2026-03-01", same), // older, confirmed fraud
+		mk("O2", "2026-09-10", same), // target
+		mk("O3", "2026-09-20", same), // newer, confirmed fraud: not "older"
+		mk("P1", "2026-02-01", payout("PAY-P")), mk("P2", "2026-09-10", payout("PAY-P"), func(f *ingest.FNOL) { f.ClaimantID = "DRV-P2" }),
+		mk("P0", "2026-01-15", func(f *ingest.FNOL) { f.ClaimantID = "DRV-P2" }), // P2's own older claim, not substantiated
+	}, []caseSpec{{"O1", DispConfirmed}, {"O3", DispConfirmed}, {"P0", "not_substantiated"}})
+
+	r, err := Analyze(g, "O2", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pts, ok := factorPoints(r, FConfirmedFraud)
+	if !ok || pts != PtsConfirmed {
+		t.Fatalf("the claimant's own older confirmed claim must add +%d: %+v", PtsConfirmed, r.Factors)
+	}
+	for _, f := range r.Factors {
+		if f.Name == FConfirmedFraud && (fmt.Sprint(f.Claims) != "[O1]" || !strings.Contains(f.Reason, "same claimant")) {
+			t.Fatalf("only the older own claim counts, and the reason says so: %+v", f)
+		}
+	}
+	if r.ConnectedClaims != 0 || r.Score != PtsConfirmed {
+		t.Fatalf("own claims are not connections; the score is just the +15: connected=%d score=%d %+v", r.ConnectedClaims, r.Score, r.Factors)
+	}
+
+	r, err = Analyze(g, "P2", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := factorPoints(r, FConfirmedFraud); ok {
+		t.Fatalf("a not-substantiated own claim adds nothing: %+v", r.Factors)
 	}
 }

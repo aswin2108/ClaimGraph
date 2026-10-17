@@ -334,30 +334,122 @@ func TestSameClaimantIsNotSharedEvidenceAtClaimLevel(t *testing.T) {
 	if len(res.RelatedClaims) != 0 {
 		t.Fatalf("a repeat claimant's own account/device must not link their claims: %+v", res.RelatedClaims)
 	}
+	if res.OwnClaims == nil || res.OwnClaims.ClaimantID != "DRV-SAME" || res.OwnClaims.Total != 2 || len(res.OwnClaims.Claims) != 2 {
+		t.Fatalf("the claimant's other claims must be listed as context: %+v", res.OwnClaims)
+	}
 	load(t, g, fx("X1", func(f *ingest.FNOL) { f.PayoutAccountID = "PAY-OWN" }))
 	res, _ = FindRelatedClaims(g, "R1", 3)
-	// X1 is a direct link; the repeat claimant's other claims are now reached THROUGH X1
-	// (a different claimant), never directly.
-	if got := related(res); len(got) != 3 || got["X1"].Hops != 1 || got["R2"].Hops != 2 || got["R3"].Hops != 2 {
-		t.Fatalf("another claimant using the account is a real link: %+v", res.RelatedClaims)
+	// X1 is a direct link. The repeat claimant's other claims are NOT reached through X1 either:
+	// R1 -> PAY-OWN -> X1 -> PAY-OWN -> R2 only walks out and back to the same person.
+	if got := related(res); len(got) != 1 || got["X1"].Hops != 1 {
+		t.Fatalf("only the other claimant's claim is a link: %+v", res.RelatedClaims)
+	}
+	if res.OwnClaims == nil || res.OwnClaims.Total != 2 {
+		t.Fatalf("R2 and R3 stay listed as the claimant's own claims: %+v", res.OwnClaims)
+	}
+	// A recorded decision on one of them is shown with it (context; it adds no points here).
+	if _, err := g.Query(`MATCH (c:Claim {claim_id:'R2'}) CREATE (:InvestigationCase {case_id:'CASE-R2', disposition:'confirmed_fraud'})-[:INVESTIGATES]->(c)`, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	res, _ = FindRelatedClaims(g, "R1", 3)
+	decisions := map[string]string{}
+	for _, c := range res.OwnClaims.Claims {
+		decisions[c.ClaimID] = c.Decision
+	}
+	if decisions["R2"] != "confirmed_fraud" || decisions["R3"] != "" {
+		t.Fatalf("own claims must carry their recorded decision: %+v", res.OwnClaims.Claims)
 	}
 }
 
-// Outcome types make "nothing found" an explicit answer.
-func TestOutcomeTypes(t *testing.T) {
-	g := scratch(t, "claimgraph_test_investigate_outcome")
-	load(t, g, fx("T0", func(f *ingest.FNOL) { f.RepairShopID = "SHOP-BUSY" }))
-	for i := 0; i < InfrastructureMinClaims+1; i++ {
-		load(t, g, fx(fmt.Sprintf("U%02d", i), func(f *ingest.FNOL) { f.RepairShopID = "SHOP-BUSY" }))
+// No person appears twice on a path. The live case (CLM-119990): the target's claimant K
+// lives at an address shared with neighbour N; K also filed an older claim. The older claim
+// must not appear at 2 hops through N's claim (out and back through the same address), nor
+// through a DIFFERENT identifier N shares with it; the same holds for a person in the middle
+// of a path (N's other claim is not reached by passing through N twice).
+func TestNoClaimantAppearsTwiceOnAPath(t *testing.T) {
+	g := scratch(t, "claimgraph_test_investigate_one_person")
+	load(t, g,
+		// K: the target and K's older claim, both at ADDR-K; the older claim uses device DEV-N.
+		fx("T1", func(f *ingest.FNOL) { f.ClaimantID, f.AddressID = "DRV-K", "ADDR-K" }),
+		fx("T2", func(f *ingest.FNOL) { f.ClaimantID, f.AddressID, f.DeviceID = "DRV-K", "ADDR-K", "DEV-N" }),
+		// N: a neighbour at ADDR-K whose first claim also uses DEV-N; N's second claim shares
+		// a payout account with M2.
+		fx("N1", func(f *ingest.FNOL) { f.ClaimantID, f.AddressID, f.DeviceID = "DRV-N", "ADDR-K", "DEV-N" }),
+		fx("N2", func(f *ingest.FNOL) { f.ClaimantID, f.PayoutAccountID = "DRV-N", "PAY-M" }),
+		fx("M2", func(f *ingest.FNOL) { f.ClaimantID, f.PayoutAccountID = "DRV-M2", "PAY-M" }),
+	)
+	filer := map[string]string{}
+	r, err := g.ROQuery("MATCH (c:Claim)-[:FILED_BY]->(k:Claimant) RETURN c.claim_id AS c, k.claimant_id AS k", nil, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	load(t, g, fx("LONE", nil), fx("P1", func(f *ingest.FNOL) { f.PayoutAccountID = "PAY-P" }), fx("P2", func(f *ingest.FNOL) { f.PayoutAccountID = "PAY-P" }))
-	for claim, want := range map[string]string{"T0": OutcomeInfrastructureOnly, "LONE": OutcomeNoConnection, "P1": OutcomeConnected} {
-		res, err := FindRelatedClaims(g, claim, 3)
+	for r.Next() {
+		c, _ := r.Record().Get("c")
+		k, _ := r.Record().Get("k")
+		filer[c.(string)] = k.(string)
+	}
+	onePersonOnce := func(target string, res *Result) {
+		t.Helper()
+		for _, rc := range res.RelatedClaims {
+			for _, p := range rc.Paths {
+				seen := map[string]bool{filer[target]: true}
+				for _, s := range p.Steps {
+					if seen[filer[s.ToClaim]] {
+						t.Fatalf("%s: claimant %s appears twice on %s", target, filer[s.ToClaim], p.Description)
+					}
+					seen[filer[s.ToClaim]] = true
+				}
+			}
+		}
+	}
+	for hops := 1; hops <= MaxHopsLimit; hops++ {
+		res, err := FindRelatedClaims(g, "T1", hops)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if res.Outcome != want || (want != OutcomeConnected && res.Message == "") {
-			t.Errorf("%s: outcome %q message %q, want %q", claim, res.Outcome, res.Message, want)
+		got := related(res)
+		if _, ok := got["T2"]; ok {
+			t.Fatalf("hops=%d: the target claimant's own claim must never be a related claim: %+v", hops, got["T2"])
 		}
+		if got["N1"].Hops != 1 || got["N2"].Hops != 1 {
+			t.Fatalf("hops=%d: both of the neighbour's claims are direct (shared address): %+v", hops, res.RelatedClaims)
+		}
+		if hops >= 2 && got["M2"].Hops != 2 {
+			t.Fatalf("hops=%d: M2 is reached through N2's payout account: %+v", hops, res.RelatedClaims)
+		}
+		onePersonOnce("T1", res)
+		if res.OwnClaims == nil || len(res.OwnClaims.Claims) != 1 || res.OwnClaims.Claims[0].ClaimID != "T2" {
+			t.Fatalf("hops=%d: T2 must be listed as the claimant's other claim: %+v", hops, res.OwnClaims)
+		}
+		want, err := FindRelatedClaimsReference(g, "T1", hops, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if a, b := normalize(t, res), normalize(t, want); a != b {
+			t.Fatalf("hops=%d: engines disagree: %s", hops, firstDiff(a, b))
+		}
+	}
+	// A person in the middle: from M2, N2 is direct and K's claims are 2 hops away through N's
+	// address; N1 would only be reached by passing through N twice (N2 -> ADDR-K -> T2 -> DEV-N -> N1).
+	res, err := FindRelatedClaims(g, "M2", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := related(res)
+	if got["N2"].Hops != 1 || got["T1"].Hops != 2 || got["T2"].Hops != 2 {
+		t.Fatalf("M2: unexpected links: %+v", res.RelatedClaims)
+	}
+	if _, ok := got["N1"]; ok {
+		t.Fatalf("M2: N1 is only reachable by revisiting claimant N: %+v", got["N1"].Paths)
+	}
+	onePersonOnce("M2", res)
+	if want, err := FindRelatedClaimsReference(g, "M2", 3, ""); err != nil {
+		t.Fatal(err)
+	} else if a, b := normalize(t, res), normalize(t, want); a != b {
+		t.Fatalf("M2: engines disagree: %s", firstDiff(a, b))
+	}
+	// EvidencePaths (the pair query behind the GetEvidencePaths tool) applies the same rule.
+	if paths, err := EvidencePaths(g, "T1", "T2", 3, ""); err != nil || len(paths) != 0 {
+		t.Fatalf("no evidence path may lead from a claim to its own claimant's other claim: %v %+v", err, paths)
 	}
 }

@@ -114,6 +114,28 @@ describe("evidence panel: FalkorDB timing and explicit outcomes", () => {
     expect(screen.getByText(/used by 1,493 other claims/)).toBeInTheDocument();
     expect(screen.getByText(/some evidence may be missing/)).toBeInTheDocument();
   });
+
+  it("lists the claimant's own other claims as context, with their recorded decision, never as connections", async () => {
+    const own = (id: string): Report => {
+      const r = reportA(id);
+      return { ...r,
+        investigation: { ...r.investigation, outcome: "connected",
+          same_claimant_claims: { claimant_id: "DRV-010128", total: 3,
+            claims: [{ claim_id: "CLM-105247", filing_date: "2025-05-09", decision: "confirmed_fraud" }, { claim_id: "CLM-100001", filing_date: "2024-01-02" }] } } };
+    };
+    installFakeApi({ "GET /api/claims/:id/investigation": (_c, p) => own(p.id) });
+    render(<App />);
+    const block = await screen.findByTestId("own-claims");
+    expect(within(block).getByText(/This claimant's other claims/)).toBeInTheDocument();
+    expect(within(block).getByText("CLM-105247")).toBeInTheDocument();
+    expect(within(block).getByText(/Confirmed Fraud/)).toBeInTheDocument();
+    expect(within(block).getByText(/never counted as links between claims/)).toBeInTheDocument();
+    expect(within(block).getByText(/DRV-010128/)).toBeInTheDocument();
+    expect(within(block).getByText("Showing the newest 2 of 3.")).toBeInTheDocument();
+    // Not in the list of connected claims.
+    expect(document.querySelectorAll(".ev-item strong")).not.toHaveLength(0);
+    for (const el of document.querySelectorAll(".ev-item strong")) expect(el.textContent).not.toBe("CLM-105247");
+  });
 });
 
 describe("FNOL ring alert (algo.WCC at intake)", () => {

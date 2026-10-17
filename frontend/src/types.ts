@@ -118,6 +118,13 @@ export interface Investigation {
   infrastructure_links?: InfrastructureLink[];
   /** The Cypher this traversal sent to FalkorDB, as sent ("Show Cypher"). */
   cypher_queries?: ExecutedQuery[];
+  /** Other claims filed by the target's claimant: context only, never links, no points. */
+  same_claimant_claims?: OwnClaims;
+}
+export interface OwnClaims {
+  claimant_id: string;
+  total: number;
+  claims: { claim_id: string; filing_date?: string; incident_date?: string; decision?: string }[];
 }
 /** One query as sent to FalkorDB: the fixed template plus its bound parameters. */
 export interface ExecutedQuery {

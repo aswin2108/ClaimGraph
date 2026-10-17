@@ -23,7 +23,10 @@ func TestTraversalReportsItsCypherWithIDsAsParameters(t *testing.T) {
 	if len(res.Queries) != res.Stats.Queries {
 		t.Fatalf("%d queries logged, stats say %d", len(res.Queries), res.Stats.Queries)
 	}
-	purposes := []string{"Load the target claim", "Hop 1", "Hops 2-3", "Shared infrastructure"}
+	purposes := []string{"Load the target claim", "Hop 1", "Hops 2-3", "Shared infrastructure", "Other claims filed by the same claimant"}
+	if len(res.Queries) != len(purposes) {
+		t.Fatalf("%d queries logged, want %d: %+v", len(res.Queries), len(purposes), res.Queries)
+	}
 	for i, q := range res.Queries {
 		if !strings.HasPrefix(q.Purpose, purposes[i]) {
 			t.Errorf("query %d is %q, want %q...", i, q.Purpose, purposes[i])

@@ -84,7 +84,7 @@ ANALYZE;`
 // with the identifier it goes through. A view (inlined), not a materialized table.
 const viewStep = `
 CREATE VIEW step AS
-  SELECT a.claim_id AS src, b.claim_id AS dst, e.links AS deg, a.entity AS via
+  SELECT a.claim_id AS src, b.claim_id AS dst, e.links AS deg, a.entity AS via, ca.claimant_id AS src_k, cb.claimant_id AS dst_k
   FROM claim_entity a
   JOIN entity e ON e.entity = a.entity
   JOIN claim_entity b ON b.entity = a.entity AND b.rel = a.rel AND b.claim_id <> a.claim_id
@@ -94,7 +94,7 @@ CREATE VIEW step AS
     AND NOT e.context                      -- context-only identifiers never connect claims
     AND (e.strong OR e.links <= 20)        -- weak identifiers used by > 20 claims are infrastructure
   UNION ALL
-  SELECT ca.claim_id, cb.claim_id, e.links, ka.entity
+  SELECT ca.claim_id, cb.claim_id, e.links, ka.entity, ca.claimant_id, cb.claimant_id
   FROM claim ca
   JOIN claimant_entity ka ON ka.claimant_id = ca.claimant_id
   JOIN entity e ON e.entity = ka.entity
@@ -120,28 +120,29 @@ ANALYZE strong_edge;`
 // ---- questions (PostgreSQL) ----
 
 // Q1a. Every path is enumerated (as the graph traversal does) and each claim keeps its shortest
-// distance; maxdeg carries the busiest identifier on the path for the fan-out guard (100).
+// distance; maxdeg carries the busiest identifier on the path for the fan-out guard (100), and
+// people carries the claimants on the path (no person appears twice on a path).
 // Tuning: CROSS JOIN LATERAL (... OFFSET 0) makes each hop look up only the frontier claims.
 // Without it the planner hash-joins the WHOLE step view (every transition in the book) on every
 // hop: about 650 ms instead of about 1 ms of execution for a 3-hop answer.
 const sqlQ1IDs = `
-WITH RECURSIVE walk(claim, depth, path, maxdeg) AS (
-  SELECT s.dst, 1, ARRAY[$1::text, s.dst], s.deg FROM step s WHERE s.src = $1
+WITH RECURSIVE walk(claim, depth, path, people, maxdeg) AS (
+  SELECT s.dst, 1, ARRAY[$1::text, s.dst], ARRAY[s.src_k, s.dst_k], s.deg FROM step s WHERE s.src = $1
   UNION ALL
-  SELECT s.dst, w.depth + 1, w.path || s.dst, GREATEST(w.maxdeg, s.deg)
-  FROM walk w CROSS JOIN LATERAL (SELECT st.dst, st.deg FROM step st WHERE st.src = w.claim OFFSET 0) s
-  WHERE w.depth < $2 AND NOT s.dst = ANY(w.path) AND GREATEST(w.maxdeg, s.deg) <= 100
+  SELECT s.dst, w.depth + 1, w.path || s.dst, w.people || s.dst_k, GREATEST(w.maxdeg, s.deg)
+  FROM walk w CROSS JOIN LATERAL (SELECT st.dst, st.deg, st.dst_k FROM step st WHERE st.src = w.claim OFFSET 0) s
+  WHERE w.depth < $2 AND NOT s.dst = ANY(w.path) AND NOT s.dst_k = ANY(w.people) AND GREATEST(w.maxdeg, s.deg) <= 100
 )
 SELECT claim, min(depth) FROM walk GROUP BY claim`
 
 // Q1b. The same walk, returning every shortest path with the identifier on each step.
 const sqlQ1Paths = `
-WITH RECURSIVE walk(claim, depth, path, via, maxdeg) AS (
-  SELECT s.dst, 1, ARRAY[$1::text, s.dst], ARRAY[s.via], s.deg FROM step s WHERE s.src = $1
+WITH RECURSIVE walk(claim, depth, path, via, people, maxdeg) AS (
+  SELECT s.dst, 1, ARRAY[$1::text, s.dst], ARRAY[s.via], ARRAY[s.src_k, s.dst_k], s.deg FROM step s WHERE s.src = $1
   UNION ALL
-  SELECT s.dst, w.depth + 1, w.path || s.dst, w.via || s.via, GREATEST(w.maxdeg, s.deg)
-  FROM walk w CROSS JOIN LATERAL (SELECT st.dst, st.deg, st.via FROM step st WHERE st.src = w.claim OFFSET 0) s
-  WHERE w.depth < $2 AND NOT s.dst = ANY(w.path) AND GREATEST(w.maxdeg, s.deg) <= 100
+  SELECT s.dst, w.depth + 1, w.path || s.dst, w.via || s.via, w.people || s.dst_k, GREATEST(w.maxdeg, s.deg)
+  FROM walk w CROSS JOIN LATERAL (SELECT st.dst, st.deg, st.via, st.dst_k FROM step st WHERE st.src = w.claim OFFSET 0) s
+  WHERE w.depth < $2 AND NOT s.dst = ANY(w.path) AND NOT s.dst_k = ANY(w.people) AND GREATEST(w.maxdeg, s.deg) <= 100
 )
 SELECT claim, depth, path, via FROM (
   SELECT claim, depth, path, via, min(depth) OVER (PARTITION BY claim) AS best FROM walk
@@ -755,7 +756,7 @@ func main() {
 		*name, claims, claimEdges, claimantEdges, loadTook.Round(time.Millisecond), *timeoutMs)
 	r.WriteString("Both sides apply the same rules: context-only identifiers never connect claims, weak identifiers used by more than 20 claims " +
 		"are infrastructure, identifiers with more than 100 links are not expanded beyond the first hop, the same claimant filing twice is no " +
-		"claim-level link, and every claim on a path is distinct. Every answer is compared before any time is reported.\n\n")
+		"claim-level link, every claim on a path is distinct, and no claimant appears twice on a path. Every answer is compared before any time is reported.\n\n")
 
 	// Summary: every sample pooled, median per question.
 	median := func(ds []time.Duration) float64 {

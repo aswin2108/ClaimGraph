@@ -25,6 +25,7 @@ const (
 	DefaultMaxHops   = 3
 	MaxRelatedClaims = 50 // related claims returned
 	MaxPathsPerClaim = 5  // shortest paths kept per related claim
+	MaxOwnClaims     = 20 // other claims of the target's claimant listed as context
 )
 
 // ErrClaimNotFound is returned when the target claim is not in the graph.
@@ -104,6 +105,70 @@ type Result struct {
 	// Infrastructure the target uses (see InfrastructureMinClaims): reported with exact
 	// counts instead of one related claim per user. Nil when there is none.
 	InfrastructureLinks []InfrastructureLink `json:"infrastructure_links,omitempty"`
+	// OwnClaims are the other claims filed by the target's claimant. A person's own claims are
+	// never links between claims (at any depth), so they are listed here as context, add no
+	// points and never appear in RelatedClaims. Nil when the claimant filed nothing else.
+	OwnClaims *OwnClaims `json:"same_claimant_claims,omitempty"`
+}
+
+// OwnClaims lists the target claimant's other claims, newest first (at most MaxOwnClaims).
+type OwnClaims struct {
+	ClaimantID string     `json:"claimant_id"`
+	Total      int        `json:"total"`
+	Claims     []OwnClaim `json:"claims"`
+}
+
+// OwnClaim is one other claim of the target's claimant.
+type OwnClaim struct {
+	ClaimID      string `json:"claim_id"`
+	FilingDate   string `json:"filing_date,omitempty"`
+	IncidentDate string `json:"incident_date,omitempty"`
+	// Decision is the investigator's recorded disposition on that claim, if any (context only:
+	// it never adds points to this claim).
+	Decision string `json:"decision,omitempty"`
+}
+
+// ownClaims looks up the target claimant's other claims. The query is appended to log (when
+// not nil). Both engines report it with this one function: it is a lookup, not traversal.
+func ownClaims(g *falkordb.Graph, claimID string, log *[]graph.ExecutedQuery) (*OwnClaims, error) {
+	params := map[string]any{"id": claimID, "limit": MaxOwnClaims}
+	t0 := time.Now()
+	r, err := g.ROQuery(cypherSameClaimant, params, falkordb.NewQueryOptions().SetTimeout(queryTimeoutMs))
+	if err != nil {
+		return nil, fmt.Errorf("same-claimant claims: %w", err)
+	}
+	var out *OwnClaims
+	if r.Next() {
+		rec := r.Record()
+		get := func(k string) any { v, _ := rec.Get(k); return v }
+		total, _ := get("total").(int64)
+		ids, _ := get("ids").([]interface{})
+		filed, _ := get("filed").([]interface{})
+		incident, _ := get("incident").([]interface{})
+		decisions, _ := get("decisions").([]interface{})
+		out = &OwnClaims{ClaimantID: str(get("claimant")), Total: int(total), Claims: []OwnClaim{}}
+		for i, id := range ids {
+			c := OwnClaim{ClaimID: str(id)}
+			if i < len(filed) {
+				c.FilingDate = str(filed[i])
+			}
+			if i < len(incident) {
+				c.IncidentDate = str(incident[i])
+			}
+			if i < len(decisions) {
+				c.Decision = str(decisions[i])
+			}
+			out.Claims = append(out.Claims, c)
+		}
+	}
+	if log != nil {
+		n := 0
+		if out != nil {
+			n = len(out.Claims)
+		}
+		*log = append(*log, graph.Record("Other claims filed by the same claimant (context, no points)", cypherSameClaimant, params, n, t0))
+	}
+	return out, nil
 }
 
 // Outcome types.
@@ -223,7 +288,10 @@ func FindRelatedClaimsExcluding(g *falkordb.Graph, claimID string, maxHops int, 
 	if res.InfrastructureLinks, err = infrastructure(g, claimID, excludeCategory, &res.Queries); err != nil {
 		return nil, err
 	}
-	queries := 3 // target lookup + infrastructure summary + single-transition paths
+	if res.OwnClaims, err = ownClaims(g, claimID, &res.Queries); err != nil {
+		return nil, err
+	}
+	queries := 4 // target lookup + infrastructure summary + same-claimant lookup + single-transition paths
 	if maxHops >= 2 {
 		queries++ // 2..maxHops transition shapes, one UNION ALL query
 	}

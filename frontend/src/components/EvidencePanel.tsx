@@ -131,9 +131,34 @@ export default function EvidencePanel({ report, focusClaim, onFocus, graphSize }
         </div>
       )}
 
+      {!!inv?.same_claimant_claims?.claims.length && (
+        <div className="block" data-testid="own-claims">
+          <h3>This claimant's other claims (not links)</h3>
+          <ul className="plain">
+            {inv.same_claimant_claims.claims.map((c) => (
+              <li key={c.claim_id}>
+                <strong>{c.claim_id}</strong>
+                <span className="muted small"> · filed {c.filing_date || "—"}</span>
+                {c.decision && <span className="muted small"> · {DISPOSITION_LABEL[c.decision] ?? c.decision}</span>}
+              </li>
+            ))}
+          </ul>
+          {inv.same_claimant_claims.total > inv.same_claimant_claims.claims.length && (
+            <p className="muted tiny">
+              Showing the newest {inv.same_claimant_claims.claims.length} of {inv.same_claimant_claims.total}.
+            </p>
+          )}
+          <p className="muted small">
+            Filed by the same person ({inv.same_claimant_claims.claimant_id}). Someone's own claims always share their address
+            and bank account, so they are never counted as links between claims, at any number of hops, and add no breadth or
+            timing points. An older one decided as confirmed fraud adds +15, shown in the score.
+          </p>
+        </div>
+      )}
+
       {report && report.prior_cases.length > 0 && (
         <div className="block">
-          <h3>Prior outcomes on related claims</h3>
+          <h3>Prior outcomes on related claims and this claimant's other claims</h3>
           <ul className="plain">
             {report.prior_cases.map((c) => (
               <li key={c.case_id}>

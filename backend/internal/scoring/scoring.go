@@ -447,7 +447,14 @@ func confirmedFraudFactor(res *investigate.Result, cases []PriorCase) *Factor {
 	for _, rc := range connectedClaims(res) {
 		filed[rc.ClaimID] = rc.FilingDate
 	}
+	own := map[string]bool{}
+	if res.OwnClaims != nil {
+		for _, c := range res.OwnClaims.Claims {
+			filed[c.ClaimID], own[c.ClaimID] = c.FilingDate, true
+		}
+	}
 	var claims, ids []string
+	ownCase, linkedCase := false, false
 	for _, c := range cases {
 		if c.Disposition != DispConfirmed {
 			continue
@@ -458,16 +465,25 @@ func confirmedFraudFactor(res *investigate.Result, cases []PriorCase) *Factor {
 		}
 		claims = append(claims, c.ClaimID)
 		ids = append(ids, c.CaseID)
+		if own[c.ClaimID] {
+			ownCase = true
+		} else {
+			linkedCase = true
+		}
 	}
 	if len(claims) == 0 {
 		return nil
 	}
 	sort.Strings(claims)
 	sort.Strings(ids)
-	return &Factor{
-		Name: FConfirmedFraud, Points: PtsConfirmed, Claims: claims, EvidenceIDs: ids,
-		Reason: "connected to an older claim with a human-confirmed fraud outcome",
+	reason := "connected to an older claim with a human-confirmed fraud outcome"
+	switch {
+	case ownCase && linkedCase:
+		reason = "an older claim by the same claimant and an older connected claim have human-confirmed fraud outcomes"
+	case ownCase:
+		reason = "an older claim by the same claimant has a human-confirmed fraud outcome"
 	}
+	return &Factor{Name: FConfirmedFraud, Points: PtsConfirmed, Claims: claims, EvidenceIDs: ids, Reason: reason}
 }
 
 // uncertaintyNotes lists innocent explanations an investigator should weigh.

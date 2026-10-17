@@ -113,15 +113,22 @@ func policyDays(g *falkordb.Graph, res *investigate.Result) (map[string]int, err
 	return out, nil
 }
 
-// priorCases returns outcomes recorded on claims connected to the target.
+// priorCases returns outcomes recorded on claims connected to the target and on the target
+// claimant's own other claims (a person's own claims are never links, but their recorded
+// outcomes are history about the same person).
 func priorCases(g *falkordb.Graph, res *investigate.Result) ([]PriorCase, error) {
 	connected := connectedClaims(res)
-	if len(connected) == 0 {
-		return []PriorCase{}, nil
-	}
 	ids := make([]any, 0, len(connected))
 	for _, rc := range connected {
 		ids = append(ids, rc.ClaimID)
+	}
+	if res.OwnClaims != nil {
+		for _, c := range res.OwnClaims.Claims {
+			ids = append(ids, c.ClaimID)
+		}
+	}
+	if len(ids) == 0 {
+		return []PriorCase{}, nil
 	}
 	r, err := g.ROQuery(cypherPriorCases, map[string]any{"ids": ids}, nil)
 	if err != nil {

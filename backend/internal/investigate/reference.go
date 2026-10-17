@@ -4,7 +4,8 @@ package investigate
 //
 // It predates the infrastructure rule (InfrastructureMinClaims) and does not apply it, so
 // the engines are only compared on graphs where no identifier has more than that many users.
-// It does apply the context-only rule (ContextOnly): those identifiers never connect claims.
+// It does apply the context-only rule (ContextOnly): those identifiers never connect claims,
+// and the one-person-per-path rule: no claimant appears twice on a path.
 //
 // This is the original Go-driven traversal: Go chains up to MaxHops one-transition
 // Cypher queries and does the breadth-first search itself. Production now lets
@@ -34,6 +35,8 @@ const (
 		WHERE a.claim_id IN $ids AND b.claim_id <> a.claim_id AND NOT (a)-[:FILED_BY]->()<-[:FILED_BY]-(b)
 		RETURN a.claim_id AS from_claim, b.claim_id AS to_claim,
 		       null AS from_claimant, null AS to_claimant,
+		       [(a)-[:FILED_BY]->(ka:Claimant) | ka.claimant_id][0] AS from_filer,
+		       [(b)-[:FILED_BY]->(kb:Claimant) | kb.claimant_id][0] AS to_filer,
 		       labels(e)[0] AS entity_type,
 		       coalesce(e.account_id, e.device_id, e.ip, e.shop_id) AS entity_id,
 		       e.type AS entity_subtype, e.is_public AS entity_public, indegree(e) AS entity_degree,
@@ -47,6 +50,7 @@ const (
 		WHERE a.claim_id IN $ids AND b.claim_id <> a.claim_id AND c1.claimant_id <> c2.claimant_id
 		RETURN a.claim_id AS from_claim, b.claim_id AS to_claim,
 		       c1.claimant_id AS from_claimant, c2.claimant_id AS to_claimant,
+		       c1.claimant_id AS from_filer, c2.claimant_id AS to_filer,
 		       labels(e)[0] AS entity_type,
 		       coalesce(e.value, e.address_id) AS entity_id,
 		       e.type AS entity_subtype, e.is_public AS entity_public, indegree(e) AS entity_degree,
@@ -90,6 +94,22 @@ func FindRelatedClaimsReference(g *falkordb.Graph, claimID string, maxHops int, 
 	frontier := map[string][]partial{claimID: {{}}}
 	reached := map[string]*RelatedClaim{}
 	info := map[string]claimInfo{}
+	filer := map[string]string{} // claim -> the claimant who filed it
+	// onPath reports whether claimant k already filed a claim on the path (target included).
+	onPath := func(steps []Step, k string) bool {
+		if k == "" {
+			return false
+		}
+		if filer[claimID] == k {
+			return true
+		}
+		for _, s := range steps {
+			if filer[s.ToClaim] == k {
+				return true
+			}
+		}
+		return false
+	}
 
 	for hop := 1; hop <= maxHops && len(frontier) > 0; hop++ {
 		ids := make([]any, 0, len(frontier))
@@ -98,7 +118,7 @@ func FindRelatedClaimsReference(g *falkordb.Graph, claimID string, maxHops int, 
 		}
 		sort.Slice(ids, func(i, j int) bool { return ids[i].(string) < ids[j].(string) })
 
-		steps, filed, rowsCut, err := oneHop(g, ids)
+		steps, filed, filers, rowsCut, err := oneHop(g, ids)
 		if err != nil {
 			return nil, err
 		}
@@ -107,6 +127,9 @@ func FindRelatedClaimsReference(g *falkordb.Graph, claimID string, maxHops int, 
 		}
 		for k, v := range filed {
 			info[k] = v
+		}
+		for k, v := range filers {
+			filer[k] = v
 		}
 
 		next := map[string][]partial{}
@@ -121,6 +144,9 @@ func FindRelatedClaimsReference(g *falkordb.Graph, claimID string, maxHops int, 
 				continue // context-only identifiers never connect claims (see ContextOnly)
 			}
 			for _, parent := range frontier[st.FromClaim] {
+				if onPath(parent.steps, filer[st.ToClaim]) {
+					continue // the same person again: out to a neighbour and back is not a link
+				}
 				if hop > 1 && len(next[st.ToClaim]) >= maxPartialPerClaim {
 					res.PathsTrimmed = true // bound path fan-out on dense graphs
 					continue
@@ -169,19 +195,24 @@ func FindRelatedClaimsReference(g *falkordb.Graph, claimID string, maxHops int, 
 		return nil, err
 	}
 	res.InfrastructureLinks = links
+	if res.OwnClaims, err = ownClaims(g, claimID, nil); err != nil {
+		return nil, err
+	}
 	setOutcome(res)
 	return res, nil
 }
 
-// oneHop runs the parameterized one-hop query for every claim in ids.
-// The bool is true when the per-branch row limit was reached (results may be incomplete).
-func oneHop(g *falkordb.Graph, ids []any) ([]Step, map[string]claimInfo, bool, error) {
+// oneHop runs the parameterized one-hop query for every claim in ids. It also returns who
+// filed each claim it saw. The bool is true when the per-branch row limit was reached
+// (results may be incomplete).
+func oneHop(g *falkordb.Graph, ids []any) ([]Step, map[string]claimInfo, map[string]string, bool, error) {
 	r, err := g.ROQuery(cypherOneHop, map[string]any{"ids": ids, "row_limit": rowLimitPerHop + 1}, nil)
 	if err != nil {
-		return nil, nil, false, fmt.Errorf("one-hop query: %w", err)
+		return nil, nil, nil, false, fmt.Errorf("one-hop query: %w", err)
 	}
 	var steps []Step
 	infos := map[string]claimInfo{}
+	filers := map[string]string{}
 	for r.Next() {
 		rec := r.Record()
 		get := func(k string) any { v, _ := rec.Get(k); return v }
@@ -202,6 +233,7 @@ func oneHop(g *falkordb.Graph, ids []any) ([]Step, map[string]claimInfo, bool, e
 		}
 		steps = append(steps, st)
 		infos[st.ToClaim] = claimInfo{filed: str(get("to_filed")), incident: str(get("to_incident"))}
+		filers[st.FromClaim], filers[st.ToClaim] = str(get("from_filer")), str(get("to_filer"))
 	}
 	// Deterministic order regardless of database row order.
 	sort.Slice(steps, func(i, j int) bool {
@@ -217,5 +249,5 @@ func oneHop(g *falkordb.Graph, ids []any) ([]Step, map[string]claimInfo, bool, e
 		}
 		return a.EntityID < b.EntityID
 	})
-	return steps, infos, len(steps) > rowLimitPerHop, nil
+	return steps, infos, filers, len(steps) > rowLimitPerHop, nil
 }

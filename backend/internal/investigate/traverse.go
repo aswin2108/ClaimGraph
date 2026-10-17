@@ -160,6 +160,14 @@ func shapeQuery(kinds []bool, rs relSets, pair bool, branch int, out output) str
 		for j := 0; j <= i; j++ {
 			where = append(where, fmt.Sprintf("ID(%s) <> ID(x%d)", to, j))
 		}
+		// ... filed by a new person: no claimant appears twice on a path. Without this a path
+		// walks out to a neighbour and back through the same address or account to another
+		// claim of someone already on the path (usually the target's own claimant), which the
+		// same-claimant rule deliberately does not count as a link. Transition i itself is
+		// checked below (k_a <> k_b, or the claim-level FILED_BY test); this covers earlier claims.
+		for j := 0; j < i; j++ {
+			where = append(where, fmt.Sprintf("NOT (x%d)-[:FILED_BY]->()<-[:FILED_BY]-(%s)", j, to))
+		}
 		var cross string
 		if claimant {
 			vars = append(vars, fmt.Sprintf("f%da", i), fmt.Sprintf("k%da", i), fmt.Sprintf("r%da", i), fmt.Sprintf("e%d", i))
