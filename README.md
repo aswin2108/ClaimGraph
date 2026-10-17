@@ -2,13 +2,15 @@
 
 Built for [Graph Hacks: Context for AI Agents](https://www.wemakedevs.org/hackathons/falkordb) (WeMakeDevs × FalkorDB), **Track 01: Agents That Act on Connected Data**. All data is synthetic.
 
+**Demo video: [https://youtu.be/RsdzoiJ6mp8](https://youtu.be/RsdzoiJ6mp8)**
+
+**Live demo: [https://139-59-13-125.sslip.io](https://139-59-13-125.sslip.io)**.
+
 **Every claim looks innocent on its own. The fraud is in the connections.**
 
 - **The Problem:** Some people work together to file fake insurance claims. Each claim looks normal when you check it alone: the policy is valid and the amount is reasonable. The clue is what the claims have in common: different people get paid into the same bank account, use the same phone or device, or live at the same address. Insurers usually check one claim at a time, so they miss these links.
 
 - **The Solution:** ClaimGraph is an investigation copilot for insurance fraud teams. A new auto claim comes in, FalkorDB finds how it connects to every other claim through shared payout accounts, devices, phones and addresses, and the investigator gets a priority score in which every point traces back to a real path in the graph. A graph database stores the links between claims, so they are easy to find. A bounded AI agent explains the findings. A human makes every decision.
-
-**Live demo: [https://139-59-13-125.sslip.io](https://139-59-13-125.sslip.io)**. Everyone shares one demo graph: if the showcase claim is already closed, click **Reset demo** (top right, twice). To run it yourself, see [Quick start](#quick-start-about-2-minutes).
 
 <p align="center"><img src="docs/images/traversal.gif" alt="Traversal replay: evidence grows hop by hop out of the new claim" width="640"></p>
 <p align="center"><sub>A claim that passed every ordinary policy check, traced 3 hops into a fraud ring. Each hop is a real FalkorDB path.</sub></p>
